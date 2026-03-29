@@ -1,5 +1,5 @@
+/* eslint-disable */
 import { Viaoda_Libre } from "next/font/google";
-import { env } from "~/env";
 
 export interface GenomeAssemblyFromSearch {
   id: string;
@@ -137,12 +137,46 @@ export async function getGenomeChromosomes(genomeId: string) {
   return { chromosomes };
 }
 
-export async function searchGenes(query: string, genome: string) {
+// Valid gene types to include (protein-coding and functional RNA genes)
+const VALID_GENE_TYPES = new Set([
+  "protein-coding",
+  "ncRNA",
+  "rRNA",
+  "tRNA",
+  "snRNA",
+  "snoRNA",
+  "misc_RNA",
+]);
+
+// Gene types to exclude (non-functional or regulatory elements)
+const EXCLUDED_GENE_TYPES = new Set([
+  "pseudo",
+  "pseudogene",
+  "unknown",
+  "other",
+]);
+
+export interface GeneSearchResult {
+  genes: GeneFromSearch[];
+  totalCount: number;
+  hasMore: boolean;
+}
+
+export async function searchGenes(
+  query: string,
+  genome: string,
+  chromosomeFilter?: string,
+  options?: {
+    maxResults?: number;
+    proteinCodingOnly?: boolean;
+  },
+) {
   const url = "https://clinicaltables.nlm.nih.gov/api/ncbi_genes/v3/search";
   const params = new URLSearchParams({
     terms: query,
     df: "chromosome,Symbol,description,map_location,type_of_gene",
     ef: "chromosome,Symbol,description,map_location,type_of_gene,GenomicInfo,GeneID",
+    maxList: "1000", // Fetch more results for better filtering
   });
   const response = await fetch(`${url}?${params}`);
   if (!response.ok) {
@@ -151,11 +185,15 @@ export async function searchGenes(query: string, genome: string) {
 
   const data = await response.json();
   const results: GeneFromSearch[] = [];
+  const maxResults = options?.maxResults || 100;
+  const proteinCodingOnly = options?.proteinCodingOnly ?? false;
 
   if (data[0] > 0) {
     const fieldMap = data[2];
     const geneIds = fieldMap.GeneID || [];
-    for (let i = 0; i < Math.min(10, data[0]); ++i) {
+    const typeOfGene = fieldMap.type_of_gene || [];
+
+    for (let i = 0; i < Math.min(1000, data[0]); ++i) {
       if (i < data[3].length) {
         try {
           const display = data[3][i];
@@ -163,6 +201,38 @@ export async function searchGenes(query: string, genome: string) {
           if (chrom && !chrom.startsWith("chr")) {
             chrom = `chr${chrom}`;
           }
+
+          // Apply chromosome filter if provided
+          if (chromosomeFilter && chrom !== chromosomeFilter) {
+            continue;
+          }
+
+          // Get gene type and filter out non-gene features
+          const geneType = typeOfGene[i]?.toLowerCase() || "unknown";
+
+          // Skip if it's an excluded type or contains excluded keywords
+          if (
+            EXCLUDED_GENE_TYPES.has(geneType) ||
+            geneType.includes("pseudo")
+          ) {
+            continue;
+          }
+
+          // If protein-coding only mode, be more strict
+          if (proteinCodingOnly) {
+            if (!geneType.includes("protein")) {
+              continue;
+            }
+          } else {
+            // Only include if it's a valid gene type OR if it's protein-coding
+            if (
+              !VALID_GENE_TYPES.has(geneType) &&
+              !geneType.includes("protein")
+            ) {
+              continue;
+            }
+          }
+
           results.push({
             symbol: display[2],
             name: display[3],
@@ -170,6 +240,11 @@ export async function searchGenes(query: string, genome: string) {
             description: display[3],
             gene_id: geneIds[i] || "",
           });
+
+          // Stop if we've reached the maximum
+          if (results.length >= maxResults) {
+            break;
+          }
         } catch {
           continue;
         }
@@ -178,6 +253,109 @@ export async function searchGenes(query: string, genome: string) {
   }
 
   return { query, genome, results };
+}
+
+/**
+ * Fetch genes for a specific chromosome with TRUE server-side pagination using NCBI E-utilities
+ * Returns protein-coding genes only for chromosome browsing
+ */
+export async function fetchChromosomeGenes(
+  chromosome: string,
+  genome: string,
+  offset: number = 0,
+  limit: number = 50,
+): Promise<GeneSearchResult> {
+  const chromNumber = chromosome.replace(/^chr/i, "");
+
+  // Step 1: Search for gene IDs on this chromosome using NCBI E-utilities
+  const searchUrl =
+    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi";
+
+  // Build search term for protein-coding genes on specific chromosome
+  // Using NCBI Entrez query syntax
+  const searchTerm = `${chromNumber}[Chromosome] AND Homo sapiens[Organism] AND alive[property] AND genetype protein coding[Properties]`;
+
+  const searchParams = new URLSearchParams({
+    db: "gene",
+    term: searchTerm,
+    retmax: String(limit),
+    retstart: String(offset),
+    retmode: "json",
+    sort: "Name",
+  });
+
+  const searchResponse = await fetch(`${searchUrl}?${searchParams.toString()}`);
+
+  if (!searchResponse.ok) {
+    throw new Error("NCBI Gene search failed: " + searchResponse.statusText);
+  }
+
+  const searchData = await searchResponse.json();
+  const totalCount = parseInt(searchData.esearchresult?.count || "0");
+
+  if (
+    !searchData.esearchresult ||
+    !searchData.esearchresult.idlist ||
+    searchData.esearchresult.idlist.length === 0
+  ) {
+    return { genes: [], totalCount: 0, hasMore: false };
+  }
+
+  const geneIds = searchData.esearchresult.idlist;
+
+  // Step 2: Fetch details for these gene IDs
+  const summaryUrl =
+    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi";
+  const summaryParams = new URLSearchParams({
+    db: "gene",
+    id: geneIds.join(","),
+    retmode: "json",
+  });
+
+  const summaryResponse = await fetch(
+    `${summaryUrl}?${summaryParams.toString()}`,
+  );
+
+  if (!summaryResponse.ok) {
+    throw new Error(
+      "Failed to fetch gene details: " + summaryResponse.statusText,
+    );
+  }
+
+  const summaryData = await summaryResponse.json();
+  const genes: GeneFromSearch[] = [];
+
+  if (summaryData.result && summaryData.result.uids) {
+    for (const id of summaryData.result.uids) {
+      const gene = summaryData.result[id];
+
+      // Extract chromosome from genomicinfo
+      let geneChrom = "";
+      if (gene.genomicinfo && gene.genomicinfo.length > 0) {
+        const genomicInfo = gene.genomicinfo[0];
+        geneChrom = genomicInfo.chrloc;
+        if (geneChrom && !geneChrom.startsWith("chr")) {
+          geneChrom = `chr${geneChrom}`;
+        }
+      }
+
+      genes.push({
+        symbol: gene.name || "",
+        name: gene.description || "",
+        chrom: geneChrom || chromosome,
+        description: gene.description || "",
+        gene_id: id,
+      });
+    }
+  }
+
+  const hasMore = offset + genes.length < totalCount;
+
+  return {
+    genes,
+    totalCount,
+    hasMore,
+  };
 }
 
 export async function fetchGeneDetails(geneId: string): Promise<{
@@ -261,11 +439,19 @@ export async function fetchGeneSequence(
   }
 }
 
+export interface ClinvarFetchResult {
+  variants: ClinvarVariant[];
+  totalCount: number;
+  hasMore: boolean;
+}
+
 export async function fetchClinvarVariants(
   chrom: string,
   geneBound: GeneBounds,
   genomeId: string,
-): Promise<ClinvarVariant[]> {
+  retstart: number = 0,
+  retmax: number = 100,
+): Promise<ClinvarFetchResult> {
   const chromFormatted = chrom.replace(/^chr/i, "");
 
   const minBound = Math.min(geneBound.min, geneBound.max);
@@ -280,7 +466,8 @@ export async function fetchClinvarVariants(
     db: "clinvar",
     term: searchTerm,
     retmode: "json",
-    retmax: "20",
+    retmax: String(retmax),
+    retstart: String(retstart),
   });
 
   const searchResponse = await fetch(`${searchUrl}?${searchParams.toString()}`);
@@ -291,13 +478,15 @@ export async function fetchClinvarVariants(
 
   const searchData = await searchResponse.json();
 
+  const totalCount = parseInt(searchData.esearchresult?.count || "0");
+
   if (
     !searchData.esearchresult ||
     !searchData.esearchresult.idlist ||
     searchData.esearchresult.idlist.length === 0
   ) {
     console.log("No ClinVar variants found");
-    return [];
+    return { variants: [], totalCount: 0, hasMore: false };
   }
 
   const variantIds = searchData.esearchresult.idlist;
@@ -347,7 +536,9 @@ export async function fetchClinvarVariants(
     }
   }
 
-  return variants;
+  const hasMore = retstart + variants.length < totalCount;
+
+  return { variants, totalCount, hasMore };
 }
 
 export async function analyzeVariantWithAPI({
@@ -361,21 +552,21 @@ export async function analyzeVariantWithAPI({
   genomeId: string;
   chromosome: string;
 }): Promise<AnalysisResult> {
-  const queryParams = new URLSearchParams({
-    variant_position: position.toString(),
-    alternative: alternative,
-    genome: genomeId,
-    chromosome: chromosome,
+  const response = await fetch("/api/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      variant_position: position,
+      alternative,
+      genome: genomeId,
+      chromosome,
+    }),
   });
-
-  const url = `${env.NEXT_PUBLIC_ANALYZE_SINGLE_VARIANT_BASE_URL}?${queryParams.toString()}`;
-
-  const response = await fetch(url, { method: "POST" });
 
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error("Failed to analyze variant " + errorText);
   }
 
-  return await response.json();
+  return (await response.json()) as AnalysisResult;
 }

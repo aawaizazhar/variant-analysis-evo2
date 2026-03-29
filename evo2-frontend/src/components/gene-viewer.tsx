@@ -8,9 +8,10 @@ import {
   type GeneDetailsFromSearch,
   type GeneFromSearch,
   type ClinvarVariant,
+  type ClinvarFetchResult,
 } from "~/utils/genome-api";
 import { Button } from "./ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, AlertCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GeneInformation } from "./gene-information";
 import { GeneSequence } from "./gene-sequence";
@@ -19,6 +20,17 @@ import { VariantComparisonModal } from "./variant-comparison-modal";
 import VariantAnalysis, {
   type VariantAnalysisHandle,
 } from "./variant-analysis";
+import { Skeleton } from "./ui/skeleton";
+
+const GeneViewerSkeleton = () => (
+  <div className="space-y-6">
+    <Skeleton className="h-8 w-40" />
+    <Skeleton className="h-40 w-full" />
+    <Skeleton className="h-72 w-full" />
+    <Skeleton className="h-64 w-full" />
+    <Skeleton className="h-48 w-full" />
+  </div>
+);
 
 export default function GeneViewer({
   gene,
@@ -35,7 +47,8 @@ export default function GeneViewer({
   );
   const [geneBounds, setGeneBounds] = useState<GeneBounds | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [sequenceError, setSequenceError] = useState<string | null>(null);
 
   const [startPosition, setStartPosition] = useState<string>("");
   const [endPosition, setEndPosition] = useState<string>("");
@@ -44,6 +57,9 @@ export default function GeneViewer({
   const [clinvarVariants, setClinvarVariants] = useState<ClinvarVariant[]>([]);
   const [isLoadingClinvar, setIsLoadingClinvar] = useState(false);
   const [clinvarError, setClinvarError] = useState<string | null>(null);
+  const [clinvarTotalCount, setClinvarTotalCount] = useState(0);
+  const [clinvarHasMore, setClinvarHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const [actualRange, setActualRange] = useState<{
     start: number;
@@ -77,7 +93,7 @@ export default function GeneViewer({
     async (start: number, end: number) => {
       try {
         setIsLoadingSequence(true);
-        setError(null);
+        setSequenceError(null);
 
         const {
           sequence,
@@ -89,10 +105,10 @@ export default function GeneViewer({
         setActualRange(fetchedRange);
 
         if (apiError) {
-          setError(apiError);
+          setSequenceError(apiError);
         }
       } catch (err) {
-        setError("Failed to load sequence data");
+        setSequenceError("Failed to load sequence data");
       } finally {
         setIsLoadingSequence(false);
       }
@@ -100,40 +116,42 @@ export default function GeneViewer({
     [gene.chrom, genomeId],
   );
 
+  const initializeGeneData = useCallback(async () => {
+    setIsLoading(true);
+    setViewerError(null);
+    setSequenceError(null);
+
+    if (!gene.gene_id) {
+      setViewerError("Gene ID is missing, cannot fetch details");
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const {
+        geneDetails: fetchedDetail,
+        geneBounds: fetchedGeneBounds,
+        initialRange: fetchedRange,
+      } = await fetchGeneDetails(gene.gene_id);
+
+      setGeneDetail(fetchedDetail);
+      setGeneBounds(fetchedGeneBounds);
+
+      if (fetchedRange) {
+        setStartPosition(String(fetchedRange.start));
+        setEndPosition(String(fetchedRange.end));
+        await fetchGeneSequence(fetchedRange.start, fetchedRange.end);
+      }
+    } catch {
+      setViewerError("Failed to load gene information. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [gene, fetchGeneSequence]);
+
   useEffect(() => {
-    const initializeGeneData = async () => {
-      setIsLoading(true);
-
-      if (!gene.gene_id) {
-        setError("Gene ID is missing, cannot fetch details");
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        const {
-          geneDetails: fetchedDetail,
-          geneBounds: fetchedGeneBounds,
-          initialRange: fetchedRange,
-        } = await fetchGeneDetails(gene.gene_id);
-
-        setGeneDetail(fetchedDetail);
-        setGeneBounds(fetchedGeneBounds);
-
-        if (fetchedRange) {
-          setStartPosition(String(fetchedRange.start));
-          setEndPosition(String(fetchedRange.end));
-          await fetchGeneSequence(fetchedRange.start, fetchedRange.end);
-        }
-      } catch {
-        setError("Faield to load gene information. Please try again.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     initializeGeneData();
-  }, [gene, genomeId]);
+  }, [initializeGeneData]);
 
   const handleSequenceClick = useCallback(
     (position: number, nucleotide: string) => {
@@ -171,33 +189,53 @@ export default function GeneViewer({
     }
 
     if (validationError) {
-      setError(validationError);
+      setSequenceError(validationError);
       return;
     }
 
-    setError(null);
+    setSequenceError(null);
     fetchGeneSequence(start, end);
   }, [startPosition, endPosition, fetchGeneSequence, geneBounds]);
 
-  const fetchClinvarVariants = async () => {
+  const fetchClinvarVariants = async (append: boolean = false) => {
     if (!gene.chrom || !geneBounds) return;
 
-    setIsLoadingClinvar(true);
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoadingClinvar(true);
+      setClinvarVariants([]);
+    }
     setClinvarError(null);
 
     try {
-      const variants = await apiFetchClinvarVariants(
+      const retstart = append ? clinvarVariants.length : 0;
+      const result: ClinvarFetchResult = await apiFetchClinvarVariants(
         gene.chrom,
         geneBounds,
         genomeId,
+        retstart,
       );
-      setClinvarVariants(variants);
-      console.log(variants);
+
+      if (append) {
+        setClinvarVariants((prev) => [...prev, ...result.variants]);
+      } else {
+        setClinvarVariants(result.variants);
+      }
+
+      setClinvarTotalCount(result.totalCount);
+      setClinvarHasMore(result.hasMore);
+      console.log(
+        `Loaded ${result.variants.length} variants. Total: ${result.totalCount}`,
+      );
     } catch (error) {
       setClinvarError("Failed to fetch ClinVar variants");
-      setClinvarVariants([]);
+      if (!append) {
+        setClinvarVariants([]);
+      }
     } finally {
       setIsLoadingClinvar(false);
+      setIsLoadingMore(false);
     }
   };
 
@@ -214,9 +252,24 @@ export default function GeneViewer({
   };
 
   if (isLoading) {
+    return <GeneViewerSkeleton />;
+  }
+
+  if (viewerError) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-gray-800"></div>
+      <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-400">
+        <div className="mb-4 flex items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          <span>{viewerError}</span>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="outline" onClick={initializeGeneData}>
+            Try again
+          </Button>
+          <Button variant="ghost" onClick={onClose}>
+            Back to results
+          </Button>
+        </div>
       </div>
     );
   }
@@ -226,7 +279,7 @@ export default function GeneViewer({
       <Button
         variant="ghost"
         size="sm"
-        className="cursor-pointer text-[#3c4f3d] hover:bg-[#e9eeea]/70"
+        className="text-foreground hover:bg-elevated cursor-pointer"
         onClick={onClose}
       >
         <ArrowLeft className="mr-2 h-4 w-4" />
@@ -245,12 +298,16 @@ export default function GeneViewer({
       />
 
       <KnownVariants
-        refreshVariants={fetchClinvarVariants}
+        refreshVariants={() => fetchClinvarVariants(false)}
+        loadMoreVariants={() => fetchClinvarVariants(true)}
         showComparison={showComparison}
         updateClinvarVariant={updateClinvarVariant}
         clinvarVariants={clinvarVariants}
         isLoadingClinvar={isLoadingClinvar}
+        isLoadingMore={isLoadingMore}
         clinvarError={clinvarError}
+        clinvarTotalCount={clinvarTotalCount}
+        clinvarHasMore={clinvarHasMore}
         genomeId={genomeId}
         gene={gene}
       />
@@ -265,7 +322,7 @@ export default function GeneViewer({
         sequenceData={geneSequence}
         sequenceRange={actualRange}
         isLoading={isLoadingSequence}
-        error={error}
+        error={sequenceError}
         onSequenceLoadRequest={handleLoadSequence}
         onSequenceClick={handleSequenceClick}
         maxViewRange={10000}

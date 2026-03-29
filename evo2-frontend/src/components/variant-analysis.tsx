@@ -116,30 +116,30 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
     };
 
     return (
-      <Card className="gap-0 border-none bg-white py-0 shadow-sm">
+      <Card className="gap-0 border-border/50 bg-surface py-0 shadow-sm">
         <CardHeader className="pt-4 pb-2">
-          <CardTitle className="text-sm font-normal text-[#3c4f3d]/70">
-            Variant Analysis
+          <CardTitle className="text-sm font-normal text-muted-foreground">
+            DNAAnalyzer
           </CardTitle>
         </CardHeader>
         <CardContent className="pb-4">
-          <p className="mb-4 text-xs text-[#3c4f3d]/80">
+          <p className="mb-4 text-xs text-muted-foreground">
             Predict the impact of genetic variants using the Evo2 deep learning
             model.
           </p>
           <div className="flex flex-wrap items-end gap-4">
             <div>
-              <label className="mb-1 block text-xs text-[#3c4f3d]/70">
+              <label className="mb-1 block text-xs text-muted-foreground">
                 Position
               </label>
               <Input
                 value={variantPosition}
                 onChange={handlePositionChange}
-                className="h-8 w-32 border-[#3c4f3d]/10 text-xs"
+                className="h-8 w-32 border-border/50 text-xs"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[#3c4f3d]/70">
+              <label className="mb-1 block text-xs text-muted-foreground">
                 Alternative (variant)
               </label>
               <Input
@@ -148,13 +148,13 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                 onChange={(e) =>
                   setVariantAlternative(e.target.value.toUpperCase())
                 }
-                className="h-8 w-32 border-[#3c4f3d]/10 text-xs"
+                className="h-8 w-32 border-border/50 text-xs"
                 placeholder="e.g., T"
                 maxLength={1}
               />
             </div>
             {variantReference && (
-              <div className="mb-2 flex items-center gap-2 text-xs text-[#3c4f3d]">
+              <div className="mb-2 flex items-center gap-2 text-xs text-foreground">
                 <span>Substitution</span>
                 <span
                   className={`font-medium ${getNucleotideColorClass(variantReference)}`}
@@ -171,7 +171,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
             )}
             <Button
               disabled={isAnalyzing || !variantPosition || !variantAlternative}
-              className="h-8 cursor-pointer bg-[#3c4f3d] text-xs text-white hover:bg-[#3c4f3d]/90"
+              className="h-8 cursor-pointer bg-phosphor text-xs text-void hover:bg-phosphor/90"
               onClick={() =>
                 handleVariantSubmit(
                   variantPosition.replaceAll(",", ""),
@@ -215,20 +215,20 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                 return (
                   <div
                     key={matchedVariant.clinvar_id}
-                    className="mt-4 rounded-md border border-[#3c4f3d]/10 bg-[#e9eeea]/30 p-4"
+                    className="mt-4 rounded-md border border-border/50 bg-elevated/30 p-4"
                   >
                     <div className="mb-3 flex items-center justify-between">
-                      <h4 className="text-sm font-medium text-[#3c4f3d]">
+                      <h4 className="text-sm font-medium text-foreground">
                         Known Variant Detected
                       </h4>
-                      <span className="text-xs text-[#3c4f3d]/70">
+                      <span className="text-xs text-muted-foreground">
                         Position: {matchedVariant.location}
                       </span>
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-xs font-medium text-[#3c4f3d]/70">
+                        <div className="mb-1 text-xs font-medium text-muted-foreground">
                           Variant Details
                         </div>
                         <div className="text-sm">{matchedVariant.title}</div>
@@ -244,7 +244,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                             </span>
                           </span>
                         </div>
-                        <div className="mt-2 text-xs text-[#3c4f3d]/70">
+                        <div className="mt-2 text-xs text-muted-foreground">
                           ClinVar classification
                           <span
                             className={`ml-1 rounded-sm px-2 py-0.5 ${getClassificationColorClasses(matchedVariant.classification)}`}
@@ -258,7 +258,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                           disabled={isAnalyzing}
                           variant="outline"
                           size="sm"
-                          className="h-7 cursor-pointer border-[#3c4f3d]/20 bg-[#e9eeea] text-xs text-[#3c4f3d] hover:bg-[#3c4f3d]/10"
+                          className="h-7 cursor-pointer border-border/50 bg-elevated text-xs text-foreground hover:bg-elevated/80"
                           onClick={() => {
                             setVariantAlternative(alt);
                             handleVariantSubmit(
@@ -285,19 +285,19 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                 );
               })[0]}
           {variantError && (
-            <div className="mt-4 rounded-md bg-red-50 p-3 text-xs text-red-600">
+            <div className="mt-4 rounded-md bg-red-500/10 p-3 text-xs text-red-400">
               {variantError}
             </div>
           )}
           {variantResult && (
-            <div className="mt-6 rounded-md border border-[#3c4f3d]/10 bg-[#e9eeea]/30 p-4">
-              <h4 className="mb-3 text-sm font-medium text-[#3c4f3d]">
+            <div className="mt-6 rounded-md border border-border/50 bg-elevated/30 p-4">
+              <h4 className="mb-3 text-sm font-medium text-foreground">
                 Analysis Result
               </h4>
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <div className="mb-2">
-                    <div className="text-xs font-medium text-[#3c4f3d]/70">
+                    <div className="text-xs font-medium text-muted-foreground">
                       Variant
                     </div>
                     <div className="text-sm">
@@ -310,13 +310,13 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs font-medium text-[#3c4f3d]/70">
+                    <div className="text-xs font-medium text-muted-foreground">
                       Delta likelihood score
                     </div>
                     <div className="text-sm">
                       {variantResult.delta_score.toFixed(6)}
                     </div>
-                    <div className="text-xs text-[#3c4f3d]/60">
+                    <div className="text-xs text-muted-foreground/80">
                       Negative score indicates loss of function
                     </div>
                   </div>
@@ -331,10 +331,10 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                     {variantResult.prediction}
                   </div>
                   <div className="mt-3">
-                    <div className="text-xs font-medium text-[#3c4f3d]/70">
+                    <div className="text-xs font-medium text-muted-foreground">
                       Confidence
                     </div>
-                    <div className="mt-1 h-2 w-full rounded-full bg-[#e9eeea]">
+                    <div className="mt-1 h-2 w-full rounded-full bg-elevated">
                       <div
                         className={`h-2 rounded-full ${variantResult.prediction.includes("pathogenic") ? "bg-red-600" : "bg-green-600"}`}
                         style={{
@@ -342,7 +342,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                         }}
                       ></div>
                     </div>
-                    <div className="mt-1 text-right text-xs text-[#3c4f3d]/60">
+                    <div className="mt-1 text-right text-xs text-muted-foreground/80">
                       {Math.round(
                         variantResult.classification_confidence * 100,
                       )}

@@ -1,7 +1,11 @@
 fastapi[standard]
+pydantic
 modal
+biopython
+numpy
 matplotlib
 pandas
 seaborn
 scikit-learn
 openpyxl
+requests

@@ -1,7 +1,8 @@
+import os
 import sys
 
 import modal
-
+from fastapi import Header, HTTPException
 from pydantic import BaseModel
 
 class VariantRequest(BaseModel):
@@ -10,21 +11,45 @@ class VariantRequest(BaseModel):
     genome: str
     chromosome: str
 
+# Working image configuration for evo2 on Modal with H100
 evo2_image = (
     modal.Image.from_registry(
-        "nvidia/cuda:12.4.0-devel-ubuntu22.04", add_python="3.12"
+        "nvidia/cuda:12.6.0-devel-ubuntu22.04", add_python="3.12"
     )
-    .apt_install(
-        ["build-essential", "cmake", "ninja-build",
-            "libcudnn8", "libcudnn8-dev", "git", "gcc", "g++"]
-    )
-    .env({
-        "CC": "/usr/bin/gcc",
-        "CXX": "/usr/bin/g++",
+    .apt_install([
+        "build-essential",
+        "cmake",
+        "ninja-build",
+        "git",
+        "gcc",
+        "libcudnn9-cuda-12",
+        "libcudnn9-dev-cuda-12",
+       # Use cuDNN 9 for CUDA 12.4
+    ])
+    .env({"CXX": "/usr/bin/g++",
+     "CC": "/usr/bin/gcc",
     })
-    .run_commands("git clone --recurse-submodules https://github.com/ArcInstitute/evo2.git && cd evo2 && pip install .")
-    .run_commands("pip uninstall -y transformer-engine transformer_engine")
-    .run_commands("pip install 'transformer_engine[pytorch]==1.13' --no-build-isolation")
+
+    .run_commands(
+        # 1️⃣ Upgrade pip & build tools
+        "pip install --upgrade pip setuptools wheel packaging ninja",
+
+        # 2️⃣ Install PyTorch 2.6.0 for CUDA 12.4
+        "pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126",
+
+        # 3️⃣ Install Transformer Engine 2.6.0.post1
+      "pip install 'transformer-engine[pytorch]==2.6.0.post1'",
+
+
+        # 4️⃣ Install flash-attn compatible with TE
+        "pip install flash-attn==2.7.4.post1",
+
+        # 5️⃣ Clone Evo2 and install in editable mode
+        "git clone https://github.com/arcinstitute/evo2 /root/evo2 && "
+        "pip install -e /root/evo2"
+       
+    )
+    # 6️⃣ Install remaining dependencies
     .pip_install_from_requirements("requirements.txt")
 )
 
@@ -284,7 +309,8 @@ def analyze_variant(relative_pos_in_window, reference, alternative, window_seq, 
     }
 
 
-@app.cls(gpu="H100", volumes={mount_path: volume}, max_containers=3, retries=2, scaledown_window=120)
+@app.cls(gpu="H100", volumes={mount_path: volume}, max_containers=3, retries=2, scaledown_window=120,
+        secrets=[modal.Secret.from_name("api-auth-key")])
 class Evo2Model:
     @modal.enter()
     def load_evo2_model(self):
@@ -293,9 +319,14 @@ class Evo2Model:
         self.model = Evo2('evo2_7b')
         print("Evo2 model loaded")
 
-    # @modal.method()
     @modal.fastapi_endpoint(method="POST")
-    def analyze_single_variant(self, request: VariantRequest):
+    def analyze_single_variant(self, request: VariantRequest,
+                               x_api_key: str = Header(alias="X-API-Key")):
+        # Verify API key
+        expected_key = os.environ.get("API_KEY", "")
+        if not x_api_key or x_api_key != expected_key:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
         variant_position = request.variant_position
         alternative = request.alternative
         genome = request.genome
@@ -358,8 +389,12 @@ def main():
         "chromosome": "chr17"
     }
 
+    # Read the API key from the local environment for testing
+    api_key = os.environ.get("API_KEY", "")
+
     headers = {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-API-Key": api_key
     }
 
     response = requests.post(url, json=payload, headers=headers)

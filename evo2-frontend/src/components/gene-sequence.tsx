@@ -15,6 +15,15 @@ import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { getNucleotideColorClass } from "~/utils/coloring-utils";
 
+type SequenceLine = {
+  startPos: number;
+  chunk: string;
+};
+
+const BASES_PER_LINE = 200;
+const LINE_HEIGHT_PX = 20;
+const VIRTUAL_BUFFER = 6;
+
 export function GeneSequence({
   geneBounds,
   geneDetail,
@@ -59,6 +68,10 @@ export function GeneSequence({
     x: number;
     y: number;
   } | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const [sequenceLines, setSequenceLines] = useState<SequenceLine[]>([]);
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 0 });
 
   const currentRangeSize = useMemo(() => {
     const start = parseInt(startPosition);
@@ -214,58 +227,83 @@ export function GeneSequence({
     [startPosition, endPosition],
   );
 
-  const formattedSequence = useMemo(() => {
-    if (!sequenceData || !sequenceRange) return null;
+  const determineLinesPerViewport = useCallback(() => {
+    const container = scrollContainerRef.current;
+    const height = container?.clientHeight ?? 256;
+    return Math.ceil(height / LINE_HEIGHT_PX) + VIRTUAL_BUFFER * 2;
+  }, []);
 
-    const start = sequenceRange.start;
-    const BASES_PER_LINE = 200;
-    const lines: JSX.Element[] = [];
-
-    for (let i = 0; i < sequenceData.length; i += BASES_PER_LINE) {
-      const lineStartPos = start + i;
-      const chunk = sequenceData.substring(i, i + BASES_PER_LINE);
-      const colorizedChars: JSX.Element[] = [];
-
-      for (let j = 0; j < chunk.length; j++) {
-        const nucleotide = chunk[j] || "";
-        const nucleotidePosition = lineStartPos + j;
-        const color = getNucleotideColorClass(nucleotide);
-        colorizedChars.push(
-          <span
-            key={j}
-            onClick={() => onSequenceClick(nucleotidePosition, nucleotide)}
-            onMouseEnter={(e) => {
-              setHoverPosition(nucleotidePosition);
-              setMousePosition({ x: e.clientX, y: e.clientY });
-            }}
-            onMouseLeave={(e) => {
-              setHoverPosition(null);
-              setMousePosition(null);
-            }}
-            className={`${color} group relative cursor-pointer`}
-          >
-            {nucleotide}
-          </span>,
-        );
-      }
-
-      lines.push(
-        <div key={i} className="flex">
-          <div className="mr-2 w-20 text-right text-gray-500 select-none">
-            {lineStartPos.toLocaleString()}
-          </div>
-          <div className="flex-1 tracking-wide">{colorizedChars}</div>
-        </div>,
-      );
+  useEffect(() => {
+    if (!sequenceData || !sequenceRange) {
+      setSequenceLines([]);
+      setVisibleRange({ start: 0, end: 0 });
+      return;
     }
 
-    return lines;
-  }, [sequenceData, sequenceRange, onSequenceClick]);
+    startTransition(() => {
+      const start = sequenceRange.start;
+      const lines: SequenceLine[] = [];
+      for (let i = 0; i < sequenceData.length; i += BASES_PER_LINE) {
+        lines.push({
+          startPos: start + i,
+          chunk: sequenceData.substring(i, i + BASES_PER_LINE),
+        });
+      }
+      setSequenceLines(lines);
+      const nextEnd = Math.min(lines.length, determineLinesPerViewport());
+      setVisibleRange({ start: 0, end: nextEnd });
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+    });
+  }, [sequenceData, sequenceRange, determineLinesPerViewport]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || !sequenceLines.length) return;
+
+    const updateRange = () => {
+      const linesPerViewport = determineLinesPerViewport();
+      const startLine = Math.max(
+        0,
+        Math.floor(container.scrollTop / LINE_HEIGHT_PX) - VIRTUAL_BUFFER,
+      );
+      const endLine = Math.min(
+        sequenceLines.length,
+        startLine + linesPerViewport,
+      );
+      setVisibleRange({
+        start: startLine,
+        end: endLine,
+      });
+    };
+
+    const handleScroll = () => {
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = window.requestAnimationFrame(updateRange);
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    updateRange();
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+    };
+  }, [determineLinesPerViewport, sequenceLines.length]);
+
+  const totalLines = sequenceLines.length;
+  const visibleLines = sequenceLines.slice(
+    visibleRange.start,
+    visibleRange.end,
+  );
+  const totalVirtualHeight = totalLines * LINE_HEIGHT_PX;
+  const translateY = visibleRange.start * LINE_HEIGHT_PX;
 
   return (
-    <Card className="gap-0 border-none bg-white py-0 shadow-sm">
+    <Card variant="glass" className="gap-0 border-border/50 border">
       <CardHeader className="pt-4 pb-2">
-        <CardTitle className="text-sm font-normal text-[#3c4f3d]/70">
+        <CardTitle className="text-muted-foreground text-sm font-normal">
           Gene Sequence
         </CardTitle>
       </CardHeader>
@@ -273,19 +311,19 @@ export function GeneSequence({
       <CardContent className="pb-4">
         {geneBounds && (
           <div className="mb-4 flex flex-col">
-            <div className="mb-2 flex flex-col items-center justify-between text-xs sm:flex-row">
-              <span className="flex items-center gap-1 text-[#3c4f3d]/70">
+            <div className="text-muted-foreground mb-2 flex flex-col items-center justify-between text-xs sm:flex-row">
+              <span className="flex items-center gap-1">
                 <p className="sm:hidden">From: </p>
                 <p>
                   {Math.min(geneBounds.min, geneBounds.max).toLocaleString()}
                 </p>
               </span>
-              <span className="text-[#3c4f3d]/70">
+              <span className="opacity-80">
                 Selected: {parseInt(startPosition || "0").toLocaleString()} -{" "}
                 {parseInt(endPosition || "0").toLocaleString()} (
                 {currentRangeSize.toLocaleString()} bp)
               </span>
-              <span className="flex items-center gap-1 text-[#3c4f3d]/70">
+              <span className="flex items-center gap-1">
                 <p className="sm:hidden">To: </p>
                 <p>
                   {Math.max(geneBounds.min, geneBounds.max).toLocaleString()}
@@ -301,11 +339,11 @@ export function GeneSequence({
                   className="relative h-6 w-full cursor-pointer"
                 >
                   {/* Track background */}
-                  <div className="absolute top-1/2 h-2 w-full -translate-y-1/2 rounded-full bg-[#e9eeea]"></div>
+                  <div className="bg-elevated/40 absolute top-1/2 h-2 w-full -translate-y-1/2 rounded-full"></div>
 
                   {/* Selected range */}
                   <div
-                    className="absolute top-1/2 h-2 -translate-y-1/2 cursor-grab rounded-full bg-[#3c4f3d] active:cursor-grabbing"
+                    className="bg-phosphor absolute top-1/2 h-2 -translate-y-1/2 cursor-grab rounded-full active:cursor-grabbing"
                     style={{
                       left: `${sliderValues.start}%`,
                       width: `${sliderValues.end - sliderValues.start}%`,
@@ -315,20 +353,20 @@ export function GeneSequence({
 
                   {/* Start handle */}
                   <div
-                    className="absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-[#3d4f3d] bg-white shadow active:cursor-grabbing"
+                    className="border-phosphor bg-background absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 shadow active:cursor-grabbing"
                     style={{ left: `${sliderValues.start}%` }}
                     onMouseDown={(e) => handleMouseDown(e, "start")}
                   >
-                    <div className="h-3 w-1 rounded-full bg-[#3d4f3d]"></div>
+                    <div className="bg-phosphor h-3 w-1 rounded-full"></div>
                   </div>
 
                   {/* End handle */}
                   <div
-                    className="absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-[#3d4f3d] bg-white shadow active:cursor-grabbing"
+                    className="border-phosphor bg-background absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 shadow active:cursor-grabbing"
                     style={{ left: `${sliderValues.end}%` }}
                     onMouseDown={(e) => handleMouseDown(e, "end")}
                   >
-                    <div className="h-3 w-1 rounded-full bg-[#3d4f3d]"></div>
+                    <div className="bg-phosphor h-3 w-1 rounded-full"></div>
                   </div>
                 </div>
               </div>
@@ -336,33 +374,33 @@ export function GeneSequence({
               {/* Position controls */}
               <div className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-[#3c4f3d]/70">Start:</span>
+                  <span className="text-muted-foreground text-xs">Start:</span>
                   <Input
                     value={startPosition}
                     onChange={(e) => onStartPositionChange(e.target.value)}
                     type="text"
                     inputMode="numeric"
                     pattern="[0-9]*"
-                    className="h-7 w-full border-[#3c4f3d]/10 text-xs sm:w-28"
+                    className="border-border/50 h-7 w-full text-xs sm:w-28"
                   />
                 </div>
                 <Button
                   size="sm"
                   disabled={isLoading}
                   onClick={onSequenceLoadRequest}
-                  className="h-7 w-full cursor-pointer bg-[#3c4f3d] text-xs text-white hover:bg-[#3c4f3d]/90 sm:w-auto"
+                  className="h-7 w-full cursor-pointer text-xs sm:w-auto"
                 >
                   {isLoading ? "Loading..." : "Load sequence"}
                 </Button>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-[#3c4f3d]/70">End:</span>
+                  <span className="text-muted-foreground text-xs">End:</span>
                   <Input
                     value={endPosition}
                     onChange={(e) => onEndPositionChange(e.target.value)}
                     type="text"
                     inputMode="numeric"
                     pattern="[0-9]*"
-                    className="h-7 w-full border-[#3c4f3d]/10 text-xs sm:w-28"
+                    className="border-border/50 h-7 w-full text-xs sm:w-28"
                   />
                 </div>
               </div>
@@ -370,38 +408,83 @@ export function GeneSequence({
           </div>
         )}
 
-        <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="text-[#3c4f3d]/70">
+        <div className="text-muted-foreground mb-2 flex items-center justify-between text-xs opacity-80">
+          <span>
             {geneDetail?.genomicinfo?.[0]?.strand === "+"
               ? "Forward strand (5' -> 3')"
               : geneDetail?.genomicinfo?.[0]?.strand === "-"
                 ? "Reverse strand (3' <- 5')"
                 : "Strand information not available"}
           </span>
-          <span className="text-[#3c4f3d]/70">
+          <span>
             Maximum window size: {maxViewRange.toLocaleString()} bp
           </span>
         </div>
 
         {error && (
-          <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">
+          <div className="mb-4 rounded-md bg-red-500/10 p-3 text-sm text-red-400">
             {error}
           </div>
         )}
 
-        <div className="w-full rounded-md bg-[#e9eeea]/50 p-3">
+        <div className="bg-surface/60 rounded-md p-3">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-[#3c4f3d]"></div>
+              <div className="border-muted-foreground border-t-phosphor h-5 w-5 animate-spin rounded-full border-2"></div>
             </div>
-          ) : sequenceData ? (
-            <div className="h-64 overflow-x-auto overflow-y-auto">
-              <pre className="font-mono text-xs leading-relaxed">
-                {formattedSequence}
-              </pre>
+          ) : sequenceLines.length ? (
+            <div
+              ref={scrollContainerRef}
+              className="h-64 overflow-x-auto overflow-y-auto"
+            >
+              <div
+                style={{ height: totalVirtualHeight, position: "relative" }}
+                className="font-mono text-xs leading-relaxed"
+              >
+                <div
+                  style={{ transform: `translateY(${translateY}px)` }}
+                  className="absolute top-0 right-0 left-0"
+                >
+                  {visibleLines.map((line) => (
+                    <div key={line.startPos} className="flex whitespace-nowrap">
+                      <div className="text-muted-foreground mr-2 w-20 text-right text-[11px] select-none">
+                        {line.startPos.toLocaleString()}
+                      </div>
+                      <div className="flex-1 tracking-wide">
+                        {Array.from(line.chunk).map((nucleotide, idx) => {
+                          const nucleotidePosition = line.startPos + idx;
+                          const color = getNucleotideColorClass(nucleotide);
+                          return (
+                            <span
+                              key={`${line.startPos}-${idx}`}
+                              onClick={() =>
+                                onSequenceClick(nucleotidePosition, nucleotide)
+                              }
+                              onMouseEnter={(e) => {
+                                setHoverPosition(nucleotidePosition);
+                                setMousePosition({
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                });
+                              }}
+                              onMouseLeave={() => {
+                                setHoverPosition(null);
+                                setMousePosition(null);
+                              }}
+                              className={`${color} group relative cursor-pointer`}
+                            >
+                              {nucleotide}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : (
-            <p className="text-center text-sm text-[#3c4f3d]/60">
+            <p className="text-muted-foreground text-center text-sm">
               {error ? "Error loading sequence" : "No sequence data loaded."}
             </p>
           )}
@@ -409,7 +492,7 @@ export function GeneSequence({
 
         {hoverPosition !== null && mousePosition !== null && (
           <div
-            className="pointer-events-none fixed z-50 rounded bg-[#3c4d3d] px-2 py-1 text-xs text-white shadow-md"
+            className="bg-elevated border-border/50 pointer-events-none fixed z-50 rounded border px-2 py-1 text-xs text-foreground shadow-md"
             style={{
               top: mousePosition.y - 30,
               left: mousePosition.x,
@@ -420,22 +503,22 @@ export function GeneSequence({
           </div>
         )}
 
-        <div className="mt-3 flex items-center gap-4">
+        <div className="text-muted-foreground mt-3 flex items-center gap-4 text-xs">
           <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded-full bg-red-600"></div>
-            <span className="text-xs text-[#3c4d3d]/70">A</span>
+            <div className="h-3 w-3 rounded-full bg-red-500"></div>
+            <span>A</span>
           </div>
           <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded-full bg-blue-600"></div>
-            <span className="text-xs text-[#3c4d3d]/70">T</span>
+            <div className="h-3 w-3 rounded-full bg-blue-500"></div>
+            <span>T</span>
           </div>
           <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded-full bg-green-600"></div>
-            <span className="text-xs text-[#3c4d3d]/70">G</span>
+            <div className="h-3 w-3 rounded-full bg-green-500"></div>
+            <span>G</span>
           </div>
           <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded-full bg-amber-600"></div>
-            <span className="text-xs text-[#3c4d3d]/70">C</span>
+            <div className="h-3 w-3 rounded-full bg-amber-500"></div>
+            <span>C</span>
           </div>
         </div>
       </CardContent>
