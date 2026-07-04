@@ -1,14 +1,39 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, useMemo, useRef } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, useMemo, useRef } from 'react'
 import { createClient } from '~/utils/supabase/client'
-import { type User, type Session } from '@supabase/supabase-js'
+import { type User } from '@supabase/supabase-js'
 import { useRouter } from 'next/navigation'
+
+/**
+ * Shape of the profile columns fetched from `profiles`.
+ * Keep in sync with the `.select()` call inside `fetchProfile`.
+ */
+export interface UserProfile {
+  id: string
+  full_name: string | null
+  display_name: string | null
+  plan_type: string | null
+  subscription_status: string | null
+  theme_preference: string | null
+  email_notifications: boolean | null
+  plan_updated_at: string | null
+}
+
+/** Columns requested in every profile fetch — avoids `select('*')`. */
+const PROFILE_COLUMNS =
+  'id, full_name, display_name, plan_type, subscription_status, theme_preference, email_notifications, plan_updated_at' as const
+
+function logRecoverableAuthIssue(context: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.warn(`${context}: ${message}`)
+}
 
 interface AuthContextType {
   user: User | null
-  profile: any | null
+  profile: UserProfile | null
   loading: boolean
+  refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -16,72 +41,101 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   loading: true,
+  refreshProfile: async () => {},
   signOut: async () => {},
 })
 
 export const useAuth = () => useContext(AuthContext)
 
-export function AuthProvider({ children, initialSession }: { children: React.ReactNode, initialSession?: Session | null }) {
-  const [user, setUser] = useState<User | null>(initialSession?.user ?? null)
-  const [profile, setProfile] = useState<any | null>(null)
+export function AuthProvider({ children, initialUser }: { children: React.ReactNode, initialUser?: User | null }) {
+  const [user, setUser] = useState<User | null>(initialUser ?? null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true) // will be false soon if user is set
-  const supabase = createClient()
+  // Memoize the browser Supabase client so we don't recreate it on every render.
+  const supabaseRef = useRef(createClient())
+  const supabase = supabaseRef.current
   const router = useRouter()
   const isMounted = useRef(false)
 
   // Sync with Server Session Prop
   useEffect(() => {
-    if (initialSession?.user && initialSession.user.id !== user?.id) {
-       setUser(initialSession.user)
-       fetchProfile(initialSession.user.id).catch(console.error)
+    if (initialUser && initialUser.id !== user?.id) {
+       setUser(initialUser)
+       fetchProfile(initialUser.id).catch(console.error)
        setLoading(false)
-    } else if (!initialSession?.user && user) {
+    } else if (!initialUser && user) {
        // Only clear if auth listener hasn't already done it
        setUser(null)
        setProfile(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialSession])
+  }, [initialUser])
 
   useEffect(() => {
     isMounted.current = true
     
     // 1. Initial Session Check (Fallback if client needs fresh data)
     const initializeAuth = async () => {
-      // If we already have a user from initialSession, we can rely on it initially.
-      if (!initialSession?.user) {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!isMounted.current) return
+      try {
+        // If we already have a user from the server, we can rely on it initially.
+        if (!initialUser) {
+          const {
+            data: { user: authenticatedUser },
+          } = await supabase.auth.getUser()
+          if (!isMounted.current) return
 
-        const currentUser = session?.user ?? null
-        setUser(currentUser)
-        
-        if (currentUser) {
-          fetchProfile(currentUser.id).catch(console.error)
+          const currentUser = authenticatedUser ?? null
+          setUser(currentUser)
+
+          if (currentUser) {
+            fetchProfile(currentUser.id).catch((error) =>
+              logRecoverableAuthIssue('Error fetching profile', error),
+            )
+          }
+        } else if (initialUser && !profile) {
+          fetchProfile(initialUser.id).catch((error) =>
+            logRecoverableAuthIssue('Error fetching profile', error),
+          )
         }
-      } else if (initialSession.user && !profile) {
-        fetchProfile(initialSession.user.id).catch(console.error)
+      } catch (error) {
+        logRecoverableAuthIssue('Could not initialize auth session', error)
+        if (isMounted.current) {
+          setUser(null)
+          setProfile(null)
+        }
+      } finally {
+        if (isMounted.current) {
+          setLoading(false)
+        }
       }
-      setLoading(false)
     }
 
-    initializeAuth()
+    void initializeAuth()
 
     // 2. Real-time Auth Subscription
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (!isMounted.current) return
 
-      const currentUser = session?.user ?? null
-      
-      // Update local state
-      setUser(currentUser)
-      
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        if (currentUser) {
-           // Do not block UI updates; fetch in background
-           fetchProfile(currentUser.id).catch(console.error)
-        }
+        supabase.auth
+          .getUser()
+          .then(({ data: { user: authenticatedUser } }) => {
+            if (!isMounted.current) return
+            setUser(authenticatedUser ?? null)
+            if (authenticatedUser) {
+              fetchProfile(authenticatedUser.id).catch((error) =>
+                logRecoverableAuthIssue('Error fetching profile', error),
+              )
+            }
+          })
+          .catch((error) => {
+            logRecoverableAuthIssue('Could not refresh auth user', error)
+            if (!isMounted.current) return
+            setUser(null)
+            setProfile(null)
+          })
       } else if (event === 'SIGNED_OUT') {
+        setUser(null)
         setProfile(null)
       }
       
@@ -104,21 +158,30 @@ export function AuthProvider({ children, initialSession }: { children: React.Rea
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select(PROFILE_COLUMNS)
         .eq('id', userId)
         .single()
       
       if (!error && data && isMounted.current) {
-        setProfile(data)
+        setProfile(data as UserProfile)
       }
     } catch (e) {
-      console.error("Error fetching profile:", e)
+      logRecoverableAuthIssue('Error fetching profile', e)
     }
   }
 
+  const refreshProfile = useCallback(async () => {
+    if (!user) return
+    await fetchProfile(user.id)
+  }, [user])
+
   const signOut = async () => {
     setLoading(true)
-    await supabase.auth.signOut()
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      logRecoverableAuthIssue('Error signing out', error)
+      setLoading(false)
+    }
     // State clearing and router.refresh() are handled by onAuthStateChange above,
     // avoiding conflicting redundant updates that cause UI freezes.
   }
@@ -127,8 +190,9 @@ export function AuthProvider({ children, initialSession }: { children: React.Rea
     user,
     profile,
     loading,
+    refreshProfile,
     signOut
-  }), [user, profile, loading])
+  }), [user, profile, loading, refreshProfile])
 
   return (
     <AuthContext.Provider value={value}>

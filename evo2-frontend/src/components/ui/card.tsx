@@ -9,7 +9,7 @@ function Card({ className, variant, ...props }: React.ComponentProps<"div"> & { 
       className={cn(
         "flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
         variant === "glass"
-          ? "border-border/50 bg-surface/80 backdrop-blur-md shadow-[0_0_30px_rgba(0,214,143,0.03)]"
+          ? "border-border/50 bg-card/90 backdrop-blur-md shadow-[0_16px_45px_rgba(15,23,42,0.08)] dark:shadow-[0_0_30px_rgba(0,214,143,0.03)]"
           : "bg-card text-card-foreground border-border/50",
         className
       )}

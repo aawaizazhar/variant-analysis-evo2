@@ -1,7 +1,11 @@
 import { redirect } from 'next/navigation'
-import { Activity, Loader2 } from 'lucide-react'
+import Link from 'next/link'
+import { Loader2, LockKeyhole } from 'lucide-react'
 import { Suspense } from 'react'
+import { ExportPredictionsButton } from '~/components/export-predictions-button'
 import { HistoryTable } from '~/components/history-table'
+import { Button } from '~/components/ui/button'
+import { getPlanLimits, normalizePlanType } from '~/lib/plans'
 import { createClient } from '~/utils/supabase/server'
 
 export default async function DashboardPage() {
@@ -13,14 +17,14 @@ export default async function DashboardPage() {
     redirect('/login')
   }
 
-  // 2. Fetch user's profile to get their plan
   const { data: profile } = await supabase
     .from('profiles')
     .select('plan_type')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
-  const planType = profile?.plan_type || 'student'
+  const planType = normalizePlanType(profile?.plan_type)
+  const planLimits = getPlanLimits(planType)
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -34,17 +38,38 @@ export default async function DashboardPage() {
             </p>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-black/40 shadow-xl overflow-hidden min-h-[400px]">
+          <div className="rounded-xl border border-border/50 bg-card shadow-xl overflow-hidden min-h-[400px]">
             <div className="p-6">
-              <h2 className="text-xl font-semibold mb-4">Recent Predictions</h2>
-              <Suspense fallback={
-                <div className="flex flex-col items-center justify-center py-24 space-y-4">
-                  <Loader2 className="h-8 w-8 text-phosphor animate-spin opacity-50" />
-                  <p className="text-sm text-muted-foreground animate-pulse">Retrieving prediction history...</p>
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <h2 className="text-xl font-semibold">Recent Predictions</h2>
+                {planLimits.csvExport ? <ExportPredictionsButton /> : null}
+              </div>
+
+              {planLimits.predictionHistory ? (
+                <Suspense fallback={
+                  <div className="flex flex-col items-center justify-center py-24 space-y-4">
+                    <Loader2 className="h-8 w-8 text-phosphor animate-spin opacity-50" />
+                    <p className="text-sm text-muted-foreground animate-pulse">Retrieving prediction history...</p>
+                  </div>
+                }>
+                  <HistoryTable userId={user.id} />
+                </Suspense>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="border-border/50 bg-muted/60 mb-4 rounded-full border p-3">
+                    <LockKeyhole className="h-7 w-7 text-phosphor" />
+                  </div>
+                  <h3 className="text-lg font-semibold">History is locked on Student</h3>
+                  <p className="text-muted-foreground mt-2 max-w-md text-sm">
+                    Prediction history and CSV export are included in the
+                    Researcher demo plan. Your Student quota is still tracked
+                    securely for daily usage limits.
+                  </p>
+                  <Button asChild className="mt-5">
+                    <Link href="/settings">Open Settings Plan</Link>
+                  </Button>
                 </div>
-              }>
-                <HistoryTable />
-              </Suspense>
+              )}
             </div>
           </div>
         </div>

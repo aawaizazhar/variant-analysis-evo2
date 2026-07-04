@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Search } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GeneViewer from "~/components/gene-viewer";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
@@ -25,7 +25,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
-  type ChromosomeFromSeach,
+  type ClinvarVariant,
   type GeneFromSearch,
   type GenomeAssemblyFromSearch,
   type GeneSearchResult,
@@ -35,6 +35,13 @@ import {
   fetchChromosomeGenes,
 } from "~/utils/genome-api";
 import { useDebounce } from "~/hooks/use-debounce";
+import {
+  formatAllowedGenomes,
+  isGenomeAllowedForPlan,
+  normalizePlanType,
+  planAllowsAllGenomes,
+} from "~/lib/plans";
+import { useAuth } from "~/providers/auth-provider";
 
 type Mode = "browse" | "search";
 
@@ -54,7 +61,7 @@ const CardSkeleton = () => (
 const TableSkeleton = ({ rows = 5 }: { rows?: number }) => (
   <div className="space-y-3">
     <Skeleton className="h-4 w-48" />
-    <div className="border-border/50 bg-surface rounded-lg border">
+    <div className="border-border/50 bg-muted rounded-lg border">
       {Array.from({ length: rows }).map((_, idx) => (
         <div
           key={idx}
@@ -70,6 +77,8 @@ const TableSkeleton = ({ rows = 5 }: { rows?: number }) => (
 );
 
 export default function HomePage() {
+  const auth = useAuth();
+  const profile = auth.profile;
   const [selectedGenome, setSelectedGenome] = useState<string>("hg38");
   const [selectedChromosome, setSelectedChromosome] = useState<string>("");
   const [selectedGene, setSelectedGene] = useState<GeneFromSearch | null>(null);
@@ -83,6 +92,23 @@ export default function HomePage() {
   const [geneHasMore, setGeneHasMore] = useState(false);
   const lastSearchRef = useRef("");
   const debouncedQuery = useDebounce(searchQuery, 400);
+
+  // ── Analysis results cache ──────────────────────────────────
+  // Persists full analysis data across GeneViewer unmount/remount cycles
+  // so that when a user navigates back to a gene, previously-analyzed
+  // variants still show their results instead of being lost.
+  const analysisCacheRef = useRef<Map<string, ClinvarVariant["analysisResult"]>>(
+    new Map(),
+  );
+
+  const onAnalysisComplete = useCallback(
+    (clinvarId: string, result: ClinvarVariant["analysisResult"]) => {
+      if (result) {
+        analysisCacheRef.current.set(clinvarId, result);
+      }
+    },
+    [],
+  );
 
   const {
     data: genomeResponse,
@@ -107,9 +133,29 @@ export default function HomePage() {
     staleTime: 1000 * 60 * 15,
   });
 
-  const chromosomes = chromosomeResponse?.chromosomes ?? [];
-  const genomes =
-    (genomeResponse?.genomes?.["Human"] as GenomeAssemblyFromSearch[]) ?? [];
+  const planType = normalizePlanType(profile?.plan_type);
+  const chromosomes = useMemo(
+    () => chromosomeResponse?.chromosomes ?? [],
+    [chromosomeResponse],
+  );
+  const allHumanGenomes = useMemo<GenomeAssemblyFromSearch[]>(
+    () => genomeResponse?.genomes?.Human ?? [],
+    [genomeResponse],
+  );
+  const genomes = useMemo(
+    () =>
+      planAllowsAllGenomes(planType)
+        ? allHumanGenomes
+        : allHumanGenomes.filter((genome) =>
+            isGenomeAllowedForPlan(planType, genome.id),
+          ),
+    [allHumanGenomes, planType],
+  );
+
+  useEffect(() => {
+    if (isGenomeAllowedForPlan(planType, selectedGenome)) return;
+    handleGenomeChange("hg38");
+  }, [planType, selectedGenome]);
 
   useEffect(() => {
     if (!chromosomes.length) return;
@@ -121,73 +167,75 @@ export default function HomePage() {
     }
   }, [chromosomes, selectedChromosome]);
 
-  const performGeneSearch = async (
-    query: string,
-    genome: string,
-    chromosomeFilter?: string,
-  ) => {
-    try {
-      setIsGeneSearchLoading(true);
-      const data = await searchGenes(query, genome, chromosomeFilter);
-      setSearchResults(data.results);
-      setGeneTotalCount(0);
-      setGeneHasMore(false);
-    } catch (err) {
-      setError("Failed to search genes");
-    } finally {
-      setIsGeneSearchLoading(false);
-    }
-  };
-
-  const fetchChromosomeGenesWithPagination = async (
-    chromosome: string,
-    genome: string,
-    append: boolean = false,
-  ) => {
-    try {
-      if (append) {
-        setIsLoadingMoreGenes(true);
-      } else {
+  const performGeneSearch = useCallback(
+    async (query: string, genome: string, chromosomeFilter?: string) => {
+      try {
         setIsGeneSearchLoading(true);
-        setSearchResults([]);
+        const data = await searchGenes(query, genome, chromosomeFilter);
+        setSearchResults(data.results);
+        setGeneTotalCount(0);
+        setGeneHasMore(false);
+      } catch {
+        setError("Failed to search genes");
+      } finally {
+        setIsGeneSearchLoading(false);
       }
-      setError(null);
+    },
+    [],
+  );
 
-      const offset = append ? searchResults.length : 0;
-      const result: GeneSearchResult = await fetchChromosomeGenes(
-        chromosome,
-        genome,
-        offset,
-        100, // Load 100 genes per batch
-      );
+  const fetchChromosomeGenesWithPagination = useCallback(
+    async (chromosome: string, genome: string, append = false, offset = 0) => {
+      try {
+        if (append) {
+          setIsLoadingMoreGenes(true);
+        } else {
+          setIsGeneSearchLoading(true);
+          setSearchResults([]);
+        }
+        setError(null);
 
-      if (append) {
-        setSearchResults((prev) => [...prev, ...result.genes]);
-      } else {
-        setSearchResults(result.genes);
+        const result: GeneSearchResult = await fetchChromosomeGenes(
+          chromosome,
+          genome,
+          offset,
+          100, // Load 100 genes per batch
+        );
+
+        if (append) {
+          setSearchResults((prev) => [...prev, ...result.genes]);
+        } else {
+          setSearchResults(result.genes);
+        }
+
+        setGeneTotalCount(result.totalCount);
+        setGeneHasMore(result.hasMore);
+      } catch {
+        setError("Failed to fetch genes for chromosome");
+        if (!append) {
+          setSearchResults([]);
+        }
+      } finally {
+        setIsGeneSearchLoading(false);
+        setIsLoadingMoreGenes(false);
       }
-
-      setGeneTotalCount(result.totalCount);
-      setGeneHasMore(result.hasMore);
-    } catch (err) {
-      setError("Failed to fetch genes for chromosome");
-      if (!append) {
-        setSearchResults([]);
-      }
-    } finally {
-      setIsGeneSearchLoading(false);
-      setIsLoadingMoreGenes(false);
-    }
-  };
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!selectedChromosome || mode !== "browse") return;
-    fetchChromosomeGenesWithPagination(
+    void fetchChromosomeGenesWithPagination(
       selectedChromosome,
       selectedGenome,
       false,
     );
-  }, [selectedChromosome, selectedGenome, mode]);
+  }, [
+    fetchChromosomeGenesWithPagination,
+    selectedChromosome,
+    selectedGenome,
+    mode,
+  ]);
 
   const handleGenomeChange = (value: string) => {
     setSelectedGenome(value);
@@ -198,11 +246,11 @@ export default function HomePage() {
 
   const handleRetry = () => {
     if (mode === "search" && searchQuery.trim()) {
-      performGeneSearch(searchQuery, selectedGenome);
+      void performGeneSearch(searchQuery, selectedGenome);
       return;
     }
     if (mode === "browse" && selectedChromosome) {
-      fetchChromosomeGenesWithPagination(
+      void fetchChromosomeGenesWithPagination(
         selectedChromosome,
         selectedGenome,
         false,
@@ -210,11 +258,11 @@ export default function HomePage() {
       return;
     }
     if (genomesError) {
-      refetchGenomes();
+      void refetchGenomes();
       return;
     }
     if (chromosomesError) {
-      refetchChromosomes();
+      void refetchChromosomes();
     }
   };
 
@@ -228,7 +276,7 @@ export default function HomePage() {
     setGeneHasMore(false);
 
     if (newMode === "browse" && selectedChromosome) {
-      fetchChromosomeGenesWithPagination(
+      void fetchChromosomeGenesWithPagination(
         selectedChromosome,
         selectedGenome,
         false,
@@ -243,14 +291,14 @@ export default function HomePage() {
     if (!searchQuery.trim()) return;
 
     lastSearchRef.current = searchQuery.trim();
-    performGeneSearch(searchQuery, selectedGenome);
+    void performGeneSearch(searchQuery, selectedGenome);
   };
 
   const loadBRCA1Example = () => {
     setMode("search");
     setSearchQuery("BRCA1");
     lastSearchRef.current = "BRCA1";
-    performGeneSearch("BRCA1", selectedGenome);
+    void performGeneSearch("BRCA1", selectedGenome);
   };
 
   useEffect(() => {
@@ -258,8 +306,8 @@ export default function HomePage() {
     const trimmed = debouncedQuery.trim();
     if (!trimmed || trimmed === lastSearchRef.current) return;
     lastSearchRef.current = trimmed;
-    performGeneSearch(trimmed, selectedGenome);
-  }, [debouncedQuery, mode, selectedGenome]);
+    void performGeneSearch(trimmed, selectedGenome);
+  }, [debouncedQuery, mode, performGeneSearch, selectedGenome]);
 
   const baseLoading =
     isGenomesFetching || (isChromosomesFetching && !chromosomes.length);
@@ -282,7 +330,10 @@ export default function HomePage() {
               <GeneViewer
                 gene={selectedGene}
                 genomeId={selectedGenome}
+                planType={planType}
                 onClose={() => setSelectedGene(null)}
+                analysisCache={analysisCacheRef.current}
+                onAnalysisComplete={onAnalysisComplete}
               />
             ) : (
               <div className="section-stack">
@@ -333,6 +384,13 @@ export default function HomePage() {
                             }
                           </p>
                         )}
+                        {planType === "student" ? (
+                          <p className="mt-3 text-sm text-amber-300">
+                            Student demo is limited to hg38. Upgrade to
+                            Researcher Demo in Settings to use{" "}
+                            {formatAllowedGenomes("researcher").toLowerCase()}.
+                          </p>
+                        ) : null}
                       </CardContent>
                     </Card>
 
@@ -347,15 +405,15 @@ export default function HomePage() {
                           value={mode}
                           onValueChange={(value) => switchMode(value as Mode)}
                         >
-                          <TabsList className="bg-surface mb-4">
+                          <TabsList className="bg-muted mb-4">
                             <TabsTrigger
-                              className="data-[state=active]:bg-elevated data-[state=active]:text-foreground"
+                              className="data-[state=active]:bg-card data-[state=active]:text-foreground"
                               value="search"
                             >
                               Search Genes
                             </TabsTrigger>
                             <TabsTrigger
-                              className="data-[state=active]:bg-elevated data-[state=active]:text-foreground"
+                              className="data-[state=active]:bg-card data-[state=active]:text-foreground"
                               value="browse"
                             >
                               Browse Chromosomes
@@ -409,7 +467,7 @@ export default function HomePage() {
                                     key={chrom.name}
                                     variant="outline"
                                     size="sm"
-                                    className={`border-border/50 text-muted-foreground hover:bg-elevated hover:text-foreground h-9 cursor-pointer bg-surface text-sm font-medium ${selectedChromosome === chrom.name ? "bg-elevated text-foreground border-phosphor/30" : ""}`}
+                                    className={`border-border/50 text-muted-foreground hover:bg-muted hover:text-foreground bg-card h-9 cursor-pointer text-sm font-medium ${selectedChromosome === chrom.name ? "bg-muted text-foreground border-phosphor/30" : ""}`}
                                     onClick={() =>
                                       setSelectedChromosome(chrom.name)
                                     }
@@ -422,11 +480,11 @@ export default function HomePage() {
                           </TabsContent>
                         </Tabs>
 
-                        {error && (
+                        {derivedError && (
                           <div className="mt-4 rounded-md border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400">
                             <div className="flex items-center gap-2">
                               <AlertCircle className="h-4 w-4" />
-                              <span>{error}</span>
+                              <span>{derivedError}</span>
                             </div>
                             <Button
                               size="sm"
@@ -450,7 +508,7 @@ export default function HomePage() {
                                     {mode === "search" ? (
                                       <>
                                         Search Results:{" "}
-                                        <span className="font-medium text-phosphor">
+                                        <span className="text-phosphor font-medium">
                                           {searchResults.length} genes
                                         </span>
                                       </>
@@ -506,14 +564,15 @@ export default function HomePage() {
                                       variant="outline"
                                       size="sm"
                                       onClick={() =>
-                                        fetchChromosomeGenesWithPagination(
+                                        void fetchChromosomeGenesWithPagination(
                                           selectedChromosome,
                                           selectedGenome,
                                           true,
+                                          searchResults.length,
                                         )
                                       }
                                       disabled={isLoadingMoreGenes}
-                                      className="border-border/50 bg-elevated text-foreground hover:bg-elevated/80 h-10 cursor-pointer px-5 text-sm"
+                                      className="border-border/50 bg-card text-foreground hover:bg-muted h-10 cursor-pointer px-5 text-sm"
                                     >
                                       {isLoadingMoreGenes ? (
                                         <>
@@ -535,7 +594,7 @@ export default function HomePage() {
                           !isGeneSearchLoading &&
                           !error &&
                           searchResults.length === 0 && (
-                            <div className="border-border/50 bg-surface/60 text-muted-foreground flex flex-col items-center justify-center rounded-lg border border-dashed px-6 py-10 text-center">
+                            <div className="border-border/50 bg-muted/60 text-muted-foreground flex flex-col items-center justify-center rounded-lg border border-dashed px-6 py-10 text-center">
                               <Search className="text-muted-foreground mb-4 h-10 w-10" />
                               <p className="text-sm leading-relaxed">
                                 {mode === "search"

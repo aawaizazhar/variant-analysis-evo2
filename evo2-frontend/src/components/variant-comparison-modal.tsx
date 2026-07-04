@@ -5,15 +5,19 @@ import {
   getClassificationColorClasses,
   getNucleotideColorClass,
 } from "~/utils/coloring-utils";
+import { DiseaseAssociationPanel } from "./disease-association-panel";
 
 export function VariantComparisonModal({
   comparisonVariant,
   onClose,
 }: {
   comparisonVariant: ClinvarVariant | null;
+  genomeId: string;
+  chromosome: string;
+  geneSymbol?: string;
   onClose: () => void;
 }) {
-  if (!comparisonVariant || !comparisonVariant.evo2Result) return null;
+  if (!comparisonVariant?.evo2Result) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -37,7 +41,7 @@ export function VariantComparisonModal({
 
         {/* Modal content */}
         <div className="p-5">
-          {comparisonVariant && comparisonVariant.evo2Result && (
+          {comparisonVariant.evo2Result && (
             <div className="space-y-6">
               <div className="border-border/40 bg-secondary/20 rounded-md border p-4">
                 <h4 className="text-foreground mb-3 text-sm font-medium">
@@ -74,9 +78,10 @@ export function VariantComparisonModal({
                         <span className="text-foreground font-mono text-xs">
                           {(() => {
                             const match =
-                              comparisonVariant.title.match(/(\w)>(\w)/);
+                              /(\w)>(\w)/.exec(comparisonVariant.title);
                             if (match && match.length === 3) {
-                              const [_, ref, alt] = match;
+                              const ref = match[1];
+                              const alt = match[2];
                               return (
                                 <>
                                   <span
@@ -217,6 +222,18 @@ export function VariantComparisonModal({
                       </span>
                     </div>
                   </div>
+
+                  {comparisonVariant.analysisResult ? (
+                    <DiseaseAssociationPanel
+                      result={comparisonVariant.analysisResult}
+                    />
+                  ) : (
+                    <div className="mt-5 rounded-md bg-amber-500/10 p-3 text-xs text-amber-700">
+                      Disease association evidence is unavailable for this cached
+                      comparison. Re-run the selected SNV to generate the full
+                      interpretation.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

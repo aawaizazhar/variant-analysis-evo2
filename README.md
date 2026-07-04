@@ -1,101 +1,119 @@
-![alt text](thumbnail.png)
+# Variant Analysis Evo2
 
-[Link to video](https://youtu.be/3dCZxmd5bvs)
+A full-stack application for analyzing genetic variants and determining disease associations using the Evo2 genomic foundation model.
 
-[Discord and more](https://www.andreastrolle.com/)
+## Project Structure
+*   **`evo2-frontend/`**: The web interface built with Next.js, React, Tailwind CSS, and Supabase.
+*   **`evo2-backend/`**: The AI inference API built with Python, FastAPI, and deployed via [Modal](https://modal.com) for serverless GPU execution.
 
-## Overview
+---
 
-Hi 🤙 In this project, you'll build a web app that can classify how likely specific mutations in DNA are to cause diseases (variant effect prediction). We will deploy and use the state-of-the-art Evo2 large language model, and use it to predict the pathogenicity of single nucleotide variants (SNVs). You'll deploy a Python backend on an H100 serverless GPU with Modal, exposing a FastAPI endpoint for analysis. After deploying the backend, you'll build a web app around it where users can select a genome assembly, browse its chromosomes or search for specific genes like BRCA1, and view the gene's reference genome sequence. The user can input a mutation in the gene and predict its pathogenicity with AI, but the user can also pick from a list of existing known variations, and compare the Evo2 prediction (pathogenic/benign) against existing ClinVar classifications. The web app is built with Next.js, React, TypeScript, Tailwind CSS, and Shadcn UI and is based off of the T3 Stack. You'll be able to build along with me from start to finish.
+## Prerequisites
+Before you begin, ensure you have the following installed and set up:
+*   [Node.js](https://nodejs.org/en) (v18 or higher)
+*   [Python](https://www.python.org/downloads/) (3.12 or higher)
+*   A [Modal Account](https://modal.com) (for deploying the AI backend)
+*   A [Supabase Account](https://supabase.com) (for the database and authentication)
 
-Everything (including GPU's) is free, and no biological background is needed, since I'll walk you through all the theory needed.
+---
 
-TL;DR / Simpler Version\
-DNA is like a long code made of A, T, G, and C. Small changes (mutations) in specific parts of this code, like in genes responsible for preventing cancer, can increase a person's risk of developing the disease. For instance, if an 'A' appears where a 'T' should be at a particular spot, that's a mutation. These changes can vary in how harmful they are, and we'll build a tool to analyze these different variations' harmfulness.
+## 1. Backend Setup (Modal)
 
-Features:
+The backend runs heavy machine learning models (like Evo2) on serverless GPUs using Modal.
 
-- 🧬 Evo2 model for variant effect prediction
-- 🩺 Predict pathogenicity of single nucleotide variants (pathogenic/benign)
-- ⚖️ Comparison view for existing ClinVar classification vs. Evo2 prediction
-- 💯 Prediction confidence estimation
-- 🌍 Genome assembly selector (e.g., hg38)
-- 🗺️ Select genes from chromosome browsing or searching (e.g., BRCA1)
-- 🌐 See full reference genome sequence (UCSC API)
-- 🧬 Explore gene and variants data (NCBI ClinVar/E-utilities)
-- 💻 Python backend deployed with Modal
-- 🚀 FastAPI endpoint for variant analysis requests
-- ⚡ GPU-accelerated (H100) variant scoring via Modal
-- 📱 Responsive Next.js web interface
-- 🎨 Modern UI with Tailwind CSS & Shadcn UI
+1.  **Navigate to the backend directory:**
+    ```bash
+    cd evo2-backend
+    ```
 
-## Evo2 Model
+2.  **Create and activate a virtual environment (Recommended):**
+    ```bash
+    # macOS/Linux
+    python -m venv .venv
+    source .venv/bin/activate
+    
+    # Windows
+    python -m venv .venv
+    .venv\Scripts\activate
+    ```
 
-Check out the paper behind the model.
+3.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-- [Paper](https://www.biorxiv.org/content/10.1101/2025.02.18.638918v1)
-- [GitHub Repository](https://github.com/ArcInstitute/evo2)
+4.  **Set up Modal authentication:**
+    Log in to your Modal account from the CLI. This will open a browser window to authenticate.
+    ```bash
+    modal setup
+    ```
 
-## Setup
+5.  **Deploy the backend to Modal:**
+    Deploy your endpoints to Modal's serverless infrastructure.
+    ```bash
+    modal deploy main.py
+    ```
+    *Note: After deployment, Modal will output the endpoint URLs for your functions in the terminal. Keep these URLs handy, as you'll need them for the frontend.*
 
-Follow these steps to install and set up the project.
+---
 
-### Clone the Repository
+## 2. Supabase Setup
 
-```bash
-git clone --recurse-submodules https://github.com/Andreaswt/variant-analysis-evo2.git
-```
+Supabase is used for user authentication and database storage.
 
-### Install Python
+1.  Log in to [Supabase](https://supabase.com) and create a **New Project**.
+2.  Once your project is ready, navigate to **Project Settings -> API**.
+3.  Copy the **Project URL** and the **anon `public` key**. You will need these for the frontend environment variables.
+4.  *(Optional depending on your project state)* Setup Auth providers in Supabase under **Authentication -> Providers** (e.g., Enable Email login or Google OAuth).
 
-Download and install Python if not already installed. Use the link below for guidance on installation:
-[Python Download](https://www.python.org/downloads/)
+---
 
-Create a virtual environment for each folder, except elevenlabs-clone-frontend, with **Python 3.10**.
+## 3. Frontend Setup (Next.js)
 
-### Backend
+The frontend communicates with both Supabase (for user sessions/data) and the Modal endpoints (for AI analysis).
 
-Navigate to backend folder:
+1.  **Navigate to the frontend directory:**
+    ```bash
+    cd evo2-frontend
+    ```
 
-```bash
-cd evo2-backend
-```
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    # or yarn / pnpm install
+    ```
 
-Install dependencies:
+3.  **Configure Environment Variables:**
+    Create a local environment file by copying the example:
+    ```bash
+    cp .env.example .env.local
+    ```
+    Open `.env.local` in your editor and fill in the values:
+    ```ini
+    # Evo2 model endpoint URL (from Modal deployment)
+    MODAL_ENDPOINT_URL="https://your-workspace-name--evo2model-analyze.modal.run"
 
-```bash
-pip install -r requirements.txt
-```
+    # FCNN Disease model endpoint URL (from Modal deployment)
+    DISEASE_MODEL_ENDPOINT_URL="https://your-workspace-name--diseaseassociationmod.modal.run"
 
-Modal setup:
+    # API key for authenticating with your Modal endpoint
+    MODAL_API_KEY="your-secret-modal-key"
 
-```bash
-modal setup
-```
+    # Supabase Configuration
+    NEXT_PUBLIC_SUPABASE_URL="https://your-project-id.supabase.co"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
+    ```
 
-Run on Modal:
+4.  **Run the development server:**
+    ```bash
+    npm run dev
+    ```
 
-```bash
-modal run main.py
-```
+5.  **Open the app:**
+    Open [http://localhost:3000](http://localhost:3000) in your browser to start using the application.
 
-Deploy backend:
+---
 
-```bash
-modal deploy main.py
-```
-
-### Frontend
-
-Install dependencies:
-
-```bash
-cd evo2-frontend
-npm i
-```
-
-Run:
-
-```bash
-npm run dev
-```
+## Troubleshooting
+*   **Modal Deploy Errors:** Ensure your Modal workspace has access to the requested GPU types (like H100s) if specified in `main.py`.
+*   **Authentication Issues:** Double-check that your `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` match your Supabase dashboard exactly with no trailing slashes.

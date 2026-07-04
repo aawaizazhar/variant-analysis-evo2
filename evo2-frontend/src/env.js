@@ -9,7 +9,9 @@ export const env = createEnv({
   server: {
     NODE_ENV: z.enum(["development", "test", "production"]),
     MODAL_ENDPOINT_URL: z.string().url(),
+    DISEASE_MODEL_ENDPOINT_URL: z.string().url(),
     MODAL_API_KEY: z.string().min(1),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   },
 
   /**
@@ -26,7 +28,9 @@ export const env = createEnv({
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     MODAL_ENDPOINT_URL: process.env.MODAL_ENDPOINT_URL,
+    DISEASE_MODEL_ENDPOINT_URL: process.env.DISEASE_MODEL_ENDPOINT_URL,
     MODAL_API_KEY: process.env.MODAL_API_KEY,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

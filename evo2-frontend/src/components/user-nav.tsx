@@ -22,7 +22,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
-import { LogOut, User as UserIcon, Shield } from "lucide-react"
+import { CreditCard, LogOut, User as UserIcon, Shield } from "lucide-react"
 import { useRouter } from "next/navigation"
 
 interface UserNavProps {
@@ -35,8 +35,13 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
   const [showLogoutDialog, setShowLogoutDialog] = React.useState(false)
   const [isPending, startTransition] = useTransition()
   const router = useRouter()
-  
-  const initials = user.email ? user.email.charAt(0).toUpperCase() : "U"
+
+  const displayLabel =
+    profile?.display_name?.trim() ||
+    profile?.full_name?.trim() ||
+    user.email ||
+    "User"
+  const initials = displayLabel.charAt(0).toUpperCase()
   const planType = profile?.plan_type || 'student'
 
   return (
@@ -52,14 +57,14 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
             <button className="flex items-center w-full transition-all outline-none focus:outline-none">
-                <Avatar className={`border border-white/10 hover:border-phosphor/50 transition-colors ${isCollapsed ? 'mx-auto' : ''}`}>
+                <Avatar className={`border border-border hover:border-phosphor/50 transition-colors ${isCollapsed ? 'mx-auto' : ''}`}>
                 <AvatarFallback className="bg-phosphor/10 text-phosphor font-bold">
                     {initials}
                 </AvatarFallback>
                 </Avatar>
                 {!isCollapsed && (
                 <div className="ml-3 text-left overflow-hidden">
-                    <p className="text-sm font-medium text-foreground truncate">{user.email}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{displayLabel}</p>
                     <p className="text-xs text-muted-foreground capitalize">{planType} Account</p>
                 </div>
                 )}
@@ -68,16 +73,31 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
             <DropdownMenuContent className="w-56" align="end" side={isCollapsed ? "right" : "bottom"} forceMount>
             <DropdownMenuLabel className="font-normal">
                 <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none">{user.email}</p>
+                <p className="text-sm font-medium leading-none">{displayLabel}</p>
+                {displayLabel !== user.email && (
+                    <p className="text-xs leading-none text-muted-foreground">
+                        {user.email}
+                    </p>
+                )}
                 <p className="text-xs leading-none text-muted-foreground uppercase tracking-tighter">
                     {planType} PLAN
                 </p>
                 </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="cursor-pointer group">
+            <DropdownMenuItem
+                className="cursor-pointer group"
+                onClick={() => router.push('/settings?section=profile')}
+            >
                 <UserIcon className="mr-2 h-4 w-4 text-muted-foreground group-hover:text-phosphor" />
                 <span>Profile Settings</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+                className="cursor-pointer group"
+                onClick={() => router.push('/settings?section=plan')}
+            >
+                <CreditCard className="mr-2 h-4 w-4 text-muted-foreground group-hover:text-phosphor" />
+                <span>Plan Settings</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem 
@@ -103,7 +123,7 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
             <Button
               variant="outline"
               onClick={() => setShowLogoutDialog(false)}
-              className="border-white/10 hover:bg-white/5 transition-all active:scale-[0.98]"
+              className="border-border hover:bg-muted transition-all active:scale-[0.98]"
             >
               Cancel
             </Button>

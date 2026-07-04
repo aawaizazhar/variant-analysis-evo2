@@ -339,11 +339,11 @@ export function GeneSequence({
                   className="relative h-6 w-full cursor-pointer"
                 >
                   {/* Track background */}
-                  <div className="bg-elevated/40 absolute top-1/2 h-2 w-full -translate-y-1/2 rounded-full"></div>
+                  <div className="bg-muted absolute top-1/2 h-2 w-full -translate-y-1/2 rounded-full"></div>
 
                   {/* Selected range */}
                   <div
-                    className="bg-phosphor absolute top-1/2 h-2 -translate-y-1/2 cursor-grab rounded-full active:cursor-grabbing"
+                    className="bg-primary absolute top-1/2 h-2 -translate-y-1/2 cursor-grab rounded-full active:cursor-grabbing"
                     style={{
                       left: `${sliderValues.start}%`,
                       width: `${sliderValues.end - sliderValues.start}%`,
@@ -357,7 +357,7 @@ export function GeneSequence({
                     style={{ left: `${sliderValues.start}%` }}
                     onMouseDown={(e) => handleMouseDown(e, "start")}
                   >
-                    <div className="bg-phosphor h-3 w-1 rounded-full"></div>
+                    <div className="bg-primary h-3 w-1 rounded-full"></div>
                   </div>
 
                   {/* End handle */}
@@ -366,7 +366,7 @@ export function GeneSequence({
                     style={{ left: `${sliderValues.end}%` }}
                     onMouseDown={(e) => handleMouseDown(e, "end")}
                   >
-                    <div className="bg-phosphor h-3 w-1 rounded-full"></div>
+                    <div className="bg-primary h-3 w-1 rounded-full"></div>
                   </div>
                 </div>
               </div>
@@ -427,7 +427,7 @@ export function GeneSequence({
           </div>
         )}
 
-        <div className="bg-surface/60 rounded-md p-3">
+        <div className="border-border/40 bg-muted/50 rounded-md border p-3">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <div className="border-muted-foreground border-t-phosphor h-5 w-5 animate-spin rounded-full border-2"></div>
@@ -492,7 +492,7 @@ export function GeneSequence({
 
         {hoverPosition !== null && mousePosition !== null && (
           <div
-            className="bg-elevated border-border/50 pointer-events-none fixed z-50 rounded border px-2 py-1 text-xs text-foreground shadow-md"
+            className="bg-popover border-border/50 pointer-events-none fixed z-50 rounded border px-2 py-1 text-xs text-popover-foreground shadow-md"
             style={{
               top: mousePosition.y - 30,
               left: mousePosition.x,

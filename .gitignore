@@ -16,6 +16,11 @@ pnpm-debug.log*
 *.swo
 *.swn
 
+# Root environments and secrets
+.venv/
+.env
+.env.*
+
 # Editor directories and files
 .vscode/*
 !.vscode/settings.json

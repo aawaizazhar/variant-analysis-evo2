@@ -1,5 +1,4 @@
 /* eslint-disable */
-import { Viaoda_Libre } from "next/font/google";
 
 export interface GenomeAssemblyFromSearch {
   id: string;
@@ -48,10 +47,14 @@ export interface ClinvarVariant {
   chromosome: string;
   location: string;
   evo2Result?: {
+    position: number;
+    reference: string;
+    alternative: string;
     prediction: string;
     delta_score: number;
     classification_confidence: number;
   };
+  analysisResult?: VariantAnalysisResult;
   isAnalyzing?: boolean;
   evo2Error?: string;
 }
@@ -63,6 +66,126 @@ export interface AnalysisResult {
   delta_score: number;
   prediction: string;
   classification_confidence: number;
+  variant_key?: string;
+  cached?: boolean;
+}
+
+export interface DiseaseAssociationInput {
+  variant_position: number;
+  reference: string;
+  alternative: string;
+  genome: string;
+  chromosome: string;
+  gene?: string;
+  gene_symbol?: string;
+  rsid?: string;
+  clinvar_variation_id?: string;
+  hgvs_g?: string;
+  transcript_id?: string;
+  source?: string;
+  evo2?: Evo2Analysis;
+}
+
+export interface CanonicalVariant {
+  assembly: string;
+  chromosome: string;
+  position: number;
+  ref: string;
+  alt: string;
+  variant_type: string;
+  hgvs_g: string;
+  rsid?: string | null;
+  clinvar_variation_id?: string | null;
+  gene_symbol?: string | null;
+  transcript_id?: string | null;
+  source: string;
+  malformed_fields: string[];
+  variant_key: string;
+}
+
+export type Evo2Prediction =
+  | "pathogenic"
+  | "likely_pathogenic"
+  | "uncertain"
+  | "likely_benign"
+  | "benign";
+
+export interface Evo2Analysis {
+  prediction: Evo2Prediction;
+  classification: string;
+  score: number | null;
+  confidence: number | null;
+  delta_score: number | null;
+  cached: boolean;
+  raw_prediction?: string | null;
+}
+
+export interface NormalizedVariant {
+  variant_key: string;
+  assembly: string;
+  gene: string | null;
+  chrom: string;
+  pos: number;
+  ref: string;
+  alt: string;
+  rsid: string | null;
+  clinvar_variation_id: string | null;
+  hgvs_g: string;
+  transcript_id: string | null;
+  source: string;
+}
+
+export interface ClinvarDiseaseEvidence {
+  disease_name: string;
+  disease_id: string | null;
+  clinical_significance: string | null;
+  sig_group: string | null;
+  review_status: string | null;
+  review_score: number | null;
+  variation_id?: string | null;
+  rsid?: string | null;
+  source: string;
+}
+
+export interface DiseaseModelRanking {
+  disease_name: string;
+  association_score: number;
+  source: "custom_ml_model";
+}
+
+export interface FinalInterpretation {
+  level: "strong" | "conflicting" | "possible" | "low" | "insufficient";
+  message: string;
+  confidence_explanation: string;
+  warning: string;
+}
+
+export type DiseaseAssociationStatus =
+  | "available"
+  | "unsupported_gene"
+  | "no_evidence_found"
+  | "model_unavailable";
+
+export interface DiseaseAssociationResult {
+  status: DiseaseAssociationStatus;
+  clinvar_evidence: ClinvarDiseaseEvidence[];
+  disease_model_ranking: DiseaseModelRanking[];
+  final_interpretation: FinalInterpretation | null;
+  model_version: string | null;
+  warnings: string[];
+}
+
+export interface VariantAnalysisResult {
+  variant_key: string;
+  gene: string | null;
+  normalized_variant: NormalizedVariant;
+  evo2: Evo2Analysis;
+  disease_association: DiseaseAssociationResult;
+  clinvar_evidence: ClinvarDiseaseEvidence[];
+  disease_model_ranking: DiseaseModelRanking[];
+  final_interpretation: FinalInterpretation | null;
+  model_version: string | null;
+  warnings: string[];
 }
 
 export async function getAvailableGenomes() {
@@ -546,27 +669,140 @@ export async function analyzeVariantWithAPI({
   alternative,
   genomeId,
   chromosome,
+  reference,
+  geneSymbol,
+  clinvarVariationId,
+  rsid,
+  hgvsG,
+  transcriptId,
+  source,
 }: {
   position: number;
   alternative: string;
   genomeId: string;
   chromosome: string;
+  reference?: string;
+  geneSymbol?: string;
+  clinvarVariationId?: string;
+  rsid?: string;
+  hgvsG?: string;
+  transcriptId?: string;
+  source?: string;
 }): Promise<AnalysisResult> {
-  const response = await fetch("/api/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      variant_position: position,
-      alternative,
-      genome: genomeId,
-      chromosome,
-    }),
+  const buildPayload = (nextAlternative: string) => ({
+    variant_position: position,
+    alternative: nextAlternative,
+    genome: genomeId,
+    chromosome,
+    reference,
+    gene_symbol: geneSymbol,
+    clinvar_variation_id: clinvarVariationId,
+    rsid,
+    hgvs_g: hgvsG,
+    transcript_id: transcriptId,
+    source,
   });
 
-  if (!response.ok) {
+  const requestAnalysis = (nextAlternative: string) =>
+    fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildPayload(nextAlternative)),
+    });
+
+  const response = await requestAnalysis(alternative);
+
+  if (!response.ok && source === "clinvar") {
     const errorText = await response.text();
-    throw new Error("Failed to analyze variant " + errorText);
+    const sameReferenceError = /Alternative base must be different from the reference base/i.test(
+      errorText,
+    );
+    const complementedAlternative = complementBase(alternative);
+
+    if (
+      sameReferenceError &&
+      complementedAlternative &&
+      complementedAlternative !== alternative.toUpperCase()
+    ) {
+      const retryResponse = await requestAnalysis(complementedAlternative);
+
+      if (retryResponse.ok) {
+        return (await retryResponse.json()) as AnalysisResult;
+      }
+
+      throw new Error(await parseApiError(retryResponse, "Failed to analyze variant"));
+    }
+
+    throw new Error(parseErrorText(errorText, "Failed to analyze variant"));
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Failed to analyze variant"));
   }
 
   return (await response.json()) as AnalysisResult;
+}
+
+function complementBase(base: string) {
+  const complements: Record<string, string> = {
+    A: "T",
+    T: "A",
+    C: "G",
+    G: "C",
+  };
+
+  return complements[base.toUpperCase()] ?? null;
+}
+
+function parseErrorText(errorText: string, fallback: string) {
+  try {
+    const payload = JSON.parse(errorText);
+    if (payload && typeof payload.error === "string") {
+      return payload.error;
+    }
+  } catch {
+    // Keep the raw text fallback below.
+  }
+
+  return errorText || fallback;
+}
+
+async function parseApiError(response: Response, fallback: string) {
+  return parseErrorText(await response.text(), fallback);
+}
+
+export async function analyzeVariantPipelineWithAPI(
+  input: DiseaseAssociationInput,
+): Promise<VariantAnalysisResult> {
+  const response = await fetch("/api/variant-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await parseApiError(response, "Failed to analyze variant"),
+    );
+  }
+
+  return (await response.json()) as VariantAnalysisResult;
+}
+
+export async function predictDiseaseAssociationWithAPI(
+  input: DiseaseAssociationInput,
+): Promise<VariantAnalysisResult> {
+  const response = await fetch("/api/disease-association", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await parseApiError(response, "Failed to predict disease association"),
+    );
+  }
+
+  return (await response.json()) as VariantAnalysisResult;
 }

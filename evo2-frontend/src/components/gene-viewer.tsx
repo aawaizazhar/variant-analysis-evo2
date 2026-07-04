@@ -9,6 +9,7 @@ import {
   type GeneFromSearch,
   type ClinvarVariant,
   type ClinvarFetchResult,
+  type VariantAnalysisResult,
 } from "~/utils/genome-api";
 import { Button } from "./ui/button";
 import { ArrowLeft, AlertCircle } from "lucide-react";
@@ -21,6 +22,7 @@ import VariantAnalysis, {
   type VariantAnalysisHandle,
 } from "./variant-analysis";
 import { Skeleton } from "./ui/skeleton";
+import { type PlanType } from "~/lib/plans";
 
 const GeneViewerSkeleton = () => (
   <div className="space-y-6">
@@ -35,11 +37,17 @@ const GeneViewerSkeleton = () => (
 export default function GeneViewer({
   gene,
   genomeId,
+  planType,
   onClose,
+  analysisCache,
+  onAnalysisComplete,
 }: {
   gene: GeneFromSearch;
   genomeId: string;
+  planType: PlanType;
   onClose: () => void;
+  analysisCache: Map<string, ClinvarVariant["analysisResult"]>;
+  onAnalysisComplete: (clinvarId: string, result: ClinvarVariant["analysisResult"]) => void;
 }) {
   const [geneSequence, setGeneSequence] = useState("");
   const [geneDetail, setGeneDetail] = useState<GeneDetailsFromSearch | null>(
@@ -87,6 +95,11 @@ export default function GeneViewer({
         v.clinvar_id == clinvar_id ? updateVariant : v,
       ),
     );
+
+    // Persist completed analysis results to the parent cache
+    if (updateVariant.analysisResult && !updateVariant.isAnalyzing) {
+      onAnalysisComplete(clinvar_id, updateVariant.analysisResult);
+    }
   };
 
   const fetchGeneSequence = useCallback(
@@ -150,7 +163,7 @@ export default function GeneViewer({
   }, [gene, fetchGeneSequence]);
 
   useEffect(() => {
-    initializeGeneData();
+    void initializeGeneData();
   }, [initializeGeneData]);
 
   const handleSequenceClick = useCallback(
@@ -194,10 +207,10 @@ export default function GeneViewer({
     }
 
     setSequenceError(null);
-    fetchGeneSequence(start, end);
+    void fetchGeneSequence(start, end);
   }, [startPosition, endPosition, fetchGeneSequence, geneBounds]);
 
-  const fetchClinvarVariants = async (append: boolean = false) => {
+  const fetchClinvarVariants = async (append = false) => {
     if (!gene.chrom || !geneBounds) return;
 
     if (append) {
@@ -220,7 +233,18 @@ export default function GeneViewer({
       if (append) {
         setClinvarVariants((prev) => [...prev, ...result.variants]);
       } else {
-        setClinvarVariants(result.variants);
+        // Re-apply any cached analysis results to freshly-fetched variants
+        const variantsWithCache = result.variants.map((v) => {
+          const cached = analysisCache.get(v.clinvar_id);
+          return cached
+            ? {
+                ...v,
+                analysisResult: cached,
+                evo2Result: toLegacyEvo2Result(cached),
+              }
+            : v;
+        });
+        setClinvarVariants(variantsWithCache);
       }
 
       setClinvarTotalCount(result.totalCount);
@@ -241,7 +265,7 @@ export default function GeneViewer({
 
   useEffect(() => {
     if (geneBounds) {
-      fetchClinvarVariants();
+      void fetchClinvarVariants();
     }
   }, [geneBounds]);
 
@@ -279,7 +303,7 @@ export default function GeneViewer({
       <Button
         variant="ghost"
         size="sm"
-        className="text-foreground hover:bg-elevated cursor-pointer"
+        className="text-foreground hover:bg-muted cursor-pointer"
         onClick={onClose}
       >
         <ArrowLeft className="mr-2 h-4 w-4" />
@@ -290,6 +314,7 @@ export default function GeneViewer({
         ref={variantAnalysisRef}
         gene={gene}
         genomeId={genomeId}
+        planType={planType}
         chromosome={gene.chrom}
         clinvarVariants={clinvarVariants}
         referenceSequence={activeReferenceNucleotide}
@@ -309,6 +334,7 @@ export default function GeneViewer({
         clinvarTotalCount={clinvarTotalCount}
         clinvarHasMore={clinvarHasMore}
         genomeId={genomeId}
+        planType={planType}
         gene={gene}
       />
 
@@ -336,8 +362,22 @@ export default function GeneViewer({
 
       <VariantComparisonModal
         comparisonVariant={comparisonVariant}
+        genomeId={genomeId}
+        chromosome={gene.chrom}
+        geneSymbol={gene.symbol}
         onClose={() => setComparisonVariant(null)}
       />
     </div>
   );
+}
+
+function toLegacyEvo2Result(result: VariantAnalysisResult) {
+  return {
+    position: result.normalized_variant.pos,
+    reference: result.normalized_variant.ref,
+    alternative: result.normalized_variant.alt,
+    prediction: result.evo2.classification,
+    delta_score: result.evo2.delta_score ?? 0,
+    classification_confidence: result.evo2.confidence ?? 0,
+  };
 }

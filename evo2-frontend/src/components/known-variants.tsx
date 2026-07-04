@@ -1,10 +1,12 @@
 "use client";
 
 import {
-  analyzeVariantWithAPI,
+  analyzeVariantPipelineWithAPI,
   type ClinvarVariant,
   type GeneFromSearch,
+  type VariantAnalysisResult,
 } from "~/utils/genome-api";
+import { formatPlanName, type PlanType } from "~/lib/plans";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import {
@@ -15,7 +17,6 @@ import {
   TableHeader,
   TableRow,
 } from "./ui/table";
-import { Viaoda_Libre } from "next/font/google";
 import {
   BarChart2,
   ExternalLink,
@@ -38,6 +39,7 @@ export default function KnownVariants({
   clinvarTotalCount,
   clinvarHasMore,
   genomeId,
+  planType,
   gene,
 }: {
   refreshVariants: () => void;
@@ -51,50 +53,83 @@ export default function KnownVariants({
   clinvarTotalCount: number;
   clinvarHasMore: boolean;
   genomeId: string;
+  planType: PlanType;
   gene: GeneFromSearch;
 }) {
   const analyzeVariant = async (variant: ClinvarVariant) => {
-    let variantDetails = null;
+    let variantDetails: {
+      position: number | null;
+      reference: string;
+      alternative: string;
+    } | null = null;
     const position = variant.location
       ? parseInt(variant.location.replaceAll(",", ""))
       : null;
 
-    const refAltMatch = variant.title.match(/(\w)>(\w)/);
+    const refAltMatch = /([ACGT])>([ACGT])/i.exec(variant.title);
 
-    if (refAltMatch && refAltMatch.length === 3) {
+    const reference = refAltMatch?.[1]?.toUpperCase();
+    const alternative = refAltMatch?.[2]?.toUpperCase();
+
+    if (reference && alternative) {
       variantDetails = {
         position,
-        reference: refAltMatch[1],
-        alternative: refAltMatch[2],
+        reference,
+        alternative,
       };
     }
 
     if (
-      !variantDetails ||
-      !variantDetails.position ||
+      !variantDetails?.position ||
       !variantDetails.reference ||
       !variantDetails.alternative
     ) {
+      updateClinvarVariant(variant.clinvar_id, {
+        ...variant,
+        isAnalyzing: false,
+        evo2Error:
+          "This ClinVar row could not be converted into a single-nucleotide Evo2 request.",
+      });
+      return;
+    }
+
+    if (
+      variantDetails.reference.toUpperCase() ===
+      variantDetails.alternative.toUpperCase()
+    ) {
+      updateClinvarVariant(variant.clinvar_id, {
+        ...variant,
+        isAnalyzing: false,
+        evo2Error: `Alternative base must be different from the reference base (${variantDetails.reference.toUpperCase()}).`,
+      });
       return;
     }
 
     updateClinvarVariant(variant.clinvar_id, {
       ...variant,
       isAnalyzing: true,
+      evo2Error: undefined,
     });
 
     try {
-      const data = await analyzeVariantWithAPI({
-        position: variantDetails.position,
+      const data = await analyzeVariantPipelineWithAPI({
+        variant_position: variantDetails.position,
+        reference: variantDetails.reference,
         alternative: variantDetails.alternative,
-        genomeId: genomeId,
+        genome: genomeId,
         chromosome: gene.chrom,
+        gene: gene.symbol,
+        gene_symbol: gene.symbol,
+        clinvar_variation_id: variant.clinvar_id,
+        source: "clinvar",
       });
 
       const updatedVariant: ClinvarVariant = {
         ...variant,
         isAnalyzing: false,
-        evo2Result: data,
+        evo2Error: undefined,
+        evo2Result: toLegacyEvo2Result(data),
+        analysisResult: data,
       };
 
       updateClinvarVariant(variant.clinvar_id, updatedVariant);
@@ -108,8 +143,12 @@ export default function KnownVariants({
       });
     }
   };
+  const filteredVariants = clinvarVariants.filter((variant) =>
+    variant.variation_type.toLowerCase().includes("single nucleotide")
+  );
+
   return (
-    <Card className="gap-0 border-border/50 bg-surface py-0 shadow-sm">
+    <Card className="gap-0 border-border/50 bg-card py-0 shadow-sm">
       <CardHeader className="flex flex-row items-center justify-between pt-4 pb-2">
         <div className="flex flex-col">
           <CardTitle className="text-sm font-normal text-muted-foreground">
@@ -117,16 +156,19 @@ export default function KnownVariants({
           </CardTitle>
           {clinvarTotalCount > 0 && (
             <p className="mt-1 text-xs text-muted-foreground/70">
-              Showing {clinvarVariants.length} of {clinvarTotalCount.toLocaleString()} variants
+              Showing {filteredVariants.length} SNVs (from {clinvarVariants.length} loaded of {clinvarTotalCount.toLocaleString()} variants)
             </p>
           )}
+          <p className="mt-1 text-xs text-muted-foreground/70">
+            Evo2 analysis uses your {formatPlanName(planType)} demo limits.
+          </p>
         </div>
         <Button
           variant="ghost"
           size="sm"
           onClick={refreshVariants}
           disabled={isLoadingClinvar}
-          className="h-7 cursor-pointer text-xs text-muted-foreground hover:bg-elevated/70"
+          className="h-7 cursor-pointer text-xs text-muted-foreground hover:bg-muted"
         >
           <RefreshCw className="mr-1 h-3 w-3" />
           Refresh
@@ -143,11 +185,11 @@ export default function KnownVariants({
           <div className="flex justify-center py-6">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-phosphor"></div>
           </div>
-        ) : clinvarVariants.length > 0 ? (
+        ) : filteredVariants.length > 0 ? (
           <div className="h-96 max-h-96 overflow-y-scroll rounded-md border border-border/50">
             <Table>
               <TableHeader className="sticky top-0 z-10">
-                <TableRow className="bg-elevated/80 hover:bg-elevated/30">
+                <TableRow className="bg-muted/80 hover:bg-muted/80">
                   <TableHead className="py-2 text-xs font-medium text-muted-foreground">
                     Variant
                   </TableHead>
@@ -163,10 +205,10 @@ export default function KnownVariants({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {clinvarVariants.map((variant) => (
+                {filteredVariants.map((variant) => (
                   <TableRow
                     key={variant.clinvar_id}
-                    className="border-b border-border/30"
+                    className="border-b border-border/40"
                   >
                     <TableCell className="py-2">
                       <div className="text-xs font-medium text-foreground">
@@ -212,41 +254,42 @@ export default function KnownVariants({
                     </TableCell>
                     <TableCell className="py-2 text-xs">
                       <div className="flex flex-col items-end gap-1">
-                        {variant.variation_type
-                          .toLowerCase()
-                          .includes("single nucleotide") ? (
-                          !variant.evo2Result ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 cursor-pointer border-border/50 bg-elevated px-3 text-xs text-foreground hover:bg-elevated/80"
-                              disabled={variant.isAnalyzing}
-                              onClick={() => analyzeVariant(variant)}
-                            >
-                              {variant.isAnalyzing ? (
-                                <>
-                                  <span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-phosphor"></span>
-                                  Analyzing...
-                                </>
-                              ) : (
-                                <>
-                                  <Zap className="mr-1 inline-block h-3 w-3" />
-                                  Analyze with Evo2
-                                </>
-                              )}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 cursor-pointer border-phosphor/30 bg-phosphor/10 px-3 text-xs text-phosphor hover:bg-phosphor/20"
-                              onClick={() => showComparison(variant)}
-                            >
-                              <BarChart2 className="mr-1 inline-block h-3 w-3" />
-                              Compare Results
-                            </Button>
-                          )
-                        ) : null}
+                        {!variant.evo2Result ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 cursor-pointer border-border/50 bg-card px-3 text-xs text-foreground hover:bg-muted"
+                            disabled={variant.isAnalyzing}
+                            onClick={() => analyzeVariant(variant)}
+                          >
+                            {variant.isAnalyzing ? (
+                              <>
+                                <span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-phosphor"></span>
+                                Analyzing...
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="mr-1 inline-block h-3 w-3" />
+                                Analyze with Evo2
+                              </>
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 cursor-pointer border-phosphor/30 bg-phosphor/10 px-3 text-xs text-phosphor hover:bg-phosphor/20"
+                            onClick={() => showComparison(variant)}
+                          >
+                            <BarChart2 className="mr-1 inline-block h-3 w-3" />
+                            Compare Results
+                          </Button>
+                        )}
+                        {variant.evo2Error && (
+                          <p className="max-w-56 text-right text-[11px] leading-snug text-red-400">
+                            {variant.evo2Error}
+                          </p>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -260,7 +303,7 @@ export default function KnownVariants({
                   size="sm"
                   onClick={loadMoreVariants}
                   disabled={isLoadingMore}
-                  className="h-8 cursor-pointer border-border/50 bg-elevated px-4 text-xs text-foreground hover:bg-elevated/80"
+                  className="h-8 cursor-pointer border-border/50 bg-card px-4 text-xs text-foreground hover:bg-muted"
                 >
                   {isLoadingMore ? (
                     <>
@@ -278,11 +321,24 @@ export default function KnownVariants({
           <div className="flex h-48 flex-col items-center justify-center text-center text-muted-foreground">
             <Search className="mb-4 h-10 w-10 text-muted-foreground/50" />
             <p className="text-sm leading-relaxed">
-              No ClinVar variants found for this gene.
+              {clinvarVariants.length > 0 
+                ? "No Single Nucleotide Variants found in the loaded variants."
+                : "No ClinVar variants found for this gene."}
             </p>
           </div>
         )}
       </CardContent>
     </Card>
   );
+}
+
+function toLegacyEvo2Result(result: VariantAnalysisResult) {
+  return {
+    position: result.normalized_variant.pos,
+    reference: result.normalized_variant.ref,
+    alternative: result.normalized_variant.alt,
+    prediction: result.evo2.classification,
+    delta_score: result.evo2.delta_score ?? 0,
+    classification_confidence: result.evo2.confidence ?? 0,
+  };
 }
