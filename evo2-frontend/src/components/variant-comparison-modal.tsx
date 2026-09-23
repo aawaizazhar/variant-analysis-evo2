@@ -20,10 +20,10 @@ export function VariantComparisonModal({
   if (!comparisonVariant?.evo2Result) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-background border border-border shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+      <div className="bg-background border-border max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border shadow-2xl">
         {/* Modal header */}
-        <div className="border-b border-border/40 p-5">
+        <div className="border-border/40 border-b p-5">
           <div className="flex items-center justify-between">
             <h3 className="text-foreground text-lg font-medium">
               DNAAnalyzer Comparison
@@ -77,8 +77,9 @@ export function VariantComparisonModal({
                         </span>
                         <span className="text-foreground font-mono text-xs">
                           {(() => {
-                            const match =
-                              /(\w)>(\w)/.exec(comparisonVariant.title);
+                            const match = /(\w)>(\w)/.exec(
+                              comparisonVariant.title,
+                            );
                             if (match && match.length === 3) {
                               const ref = match[1];
                               const alt = match[2];
@@ -151,7 +152,7 @@ export function VariantComparisonModal({
                         <span className="bg-phosphor/10 flex h-5 w-5 items-center justify-center rounded-full">
                           <span className="bg-phosphor h-3 w-3 rounded-full"></span>
                         </span>
-                        Evo2 Prediction
+                        Evo2 Computational Prediction
                       </h5>
                       <div className="mt-2">
                         <div
@@ -171,30 +172,24 @@ export function VariantComparisonModal({
                         </div>
                         <div className="text-muted-foreground/60 text-xs">
                           {comparisonVariant.evo2Result.delta_score < 0
-                            ? "Negative score indicates loss of function"
-                            : "Positive score indicated gain/neutral function"}
+                            ? "Lower sequence likelihood; not confirmed loss of function"
+                            : "Higher sequence likelihood; not confirmed gain of function"}
                         </div>
                       </div>
                       {/* Confidence bar */}
                       <div className="mt-3">
                         <div className="text-muted-foreground mb-1 text-xs">
-                          Confidence:
+                          Model score (uncalibrated):
                         </div>
-                        <div className="bg-secondary/20 mt-1 h-2 w-full rounded-full">
-                          <div
-                            className={`h-2 rounded-full ${comparisonVariant.evo2Result.prediction.includes("pathogenic") ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]" : "bg-phosphor shadow-[0_0_8px_rgba(0,214,143,0.4)]"}`}
-                            style={{
-                              width: `${Math.min(100, comparisonVariant.evo2Result.classification_confidence * 100)}%`,
-                            }}
-                          ></div>
-                        </div>
-                        <div className="text-muted-foreground/60 mt-1 text-right text-xs">
-                          {Math.round(
-                            comparisonVariant.evo2Result
-                              .classification_confidence * 100,
+                        <div className="text-muted-foreground mt-1 text-xs">
+                          {comparisonVariant.evo2Result.classification_confidence.toFixed(
+                            3,
                           )}
-                          %
                         </div>
+                        <p className="text-muted-foreground mt-2 text-xs">
+                          This is a computational prediction, not a clinical
+                          classification or disease-risk probability.
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -229,9 +224,9 @@ export function VariantComparisonModal({
                     />
                   ) : (
                     <div className="mt-5 rounded-md bg-amber-500/10 p-3 text-xs text-amber-700">
-                      Disease association evidence is unavailable for this cached
-                      comparison. Re-run the selected SNV to generate the full
-                      interpretation.
+                      Disease association evidence is unavailable for this
+                      cached comparison. Re-run the selected SNV to generate the
+                      full interpretation.
                     </div>
                   )}
                 </div>

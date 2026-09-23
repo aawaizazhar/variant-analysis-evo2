@@ -51,7 +51,7 @@ export function ExportPredictionsButton() {
           response.status === 401
             ? "Please sign in again before exporting."
             : response.status === 403
-              ? "CSV export is available on the Researcher demo plan."
+              ? "CSV export is available on the Researcher plan."
             : "Export failed. Please try again.",
         );
         return;

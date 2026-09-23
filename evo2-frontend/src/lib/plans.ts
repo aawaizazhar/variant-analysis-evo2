@@ -18,10 +18,17 @@ export const PLAN_LIMITS = {
 } as const;
 
 export type PlanType = keyof typeof PLAN_LIMITS;
-export type SubscriptionStatus = "inactive" | "demo";
+export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 
 export const PLAN_TYPES = Object.keys(PLAN_LIMITS) as PlanType[];
-export const SUBSCRIPTION_STATUSES = ["inactive", "demo"] as const;
+export const SUBSCRIPTION_STATUSES = [
+  "inactive",
+  "active",
+  "trialing",
+  "past_due",
+  "paused",
+  "canceled",
+] as const;
 
 export function normalizePlanType(planType: unknown): PlanType {
   return planType === "researcher" ? "researcher" : "student";
@@ -30,7 +37,9 @@ export function normalizePlanType(planType: unknown): PlanType {
 export function normalizeSubscriptionStatus(
   status: unknown,
 ): SubscriptionStatus {
-  return status === "demo" ? "demo" : "inactive";
+  return (SUBSCRIPTION_STATUSES as readonly unknown[]).includes(status)
+    ? (status as SubscriptionStatus)
+    : "inactive";
 }
 
 export function getPlanLimits(planType: unknown) {

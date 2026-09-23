@@ -182,11 +182,11 @@ export default function LoginPage() {
     }
 
     if (error) {
-      setGeneralError(error.message || 'Could not authenticate user')
+      setGeneralError((error.message === '' ? undefined : error.message) ?? 'Could not authenticate user')
       return
     }
 
-    router.push('/dashboard')
+    router.push('/')
     router.refresh()
   }
 
@@ -216,7 +216,7 @@ export default function LoginPage() {
     }
 
     if (error) {
-      setGeneralError(error.message || 'Could not create account')
+      setGeneralError((error.message === '' ? undefined : error.message) ?? 'Could not create account')
       return
     }
 
@@ -268,13 +268,13 @@ export default function LoginPage() {
     }
 
     if (error) {
-      setGeneralError(error.message || 'Invalid or expired verification code')
+      setGeneralError((error.message === '' ? undefined : error.message) ?? 'Invalid or expired verification code')
       return
     }
 
     setSuccessMessage('Account verified successfully!')
     setTimeout(() => {
-      router.push('/dashboard')
+      router.push('/')
       router.refresh()
     }, 1200)
   }
@@ -298,7 +298,7 @@ export default function LoginPage() {
     }
 
     if (error) {
-      setGeneralError(error.message || 'Could not resend verification code')
+      setGeneralError((error.message === '' ? undefined : error.message) ?? 'Could not resend verification code')
       return
     }
 
@@ -327,7 +327,7 @@ export default function LoginPage() {
     }
 
     if (error) {
-      setGeneralError(error.message || 'Could not send password reset email')
+      setGeneralError((error.message === '' ? undefined : error.message) ?? 'Could not send password reset email')
       return
     }
 
@@ -360,13 +360,13 @@ export default function LoginPage() {
     }
 
     if (error) {
-      setGeneralError(error.message || 'Could not update password')
+      setGeneralError((error.message === '' ? undefined : error.message) ?? 'Could not update password')
       return
     }
 
     setSuccessMessage('Password updated successfully! Redirecting…')
     setTimeout(() => {
-      router.push('/dashboard')
+      router.push('/')
       router.refresh()
     }, 1500)
   }
@@ -391,7 +391,7 @@ export default function LoginPage() {
       otpRefs.current[index - 1]?.focus()
     }
     if (e.key === 'Enter' && otpDigits.every((d) => d !== '')) {
-      handleVerifyOtp()
+      void handleVerifyOtp()
     }
   }
 
@@ -401,7 +401,7 @@ export default function LoginPage() {
     if (!pasted) return
     const newDigits = [...otpDigits]
     for (let i = 0; i < 6; i++) {
-      newDigits[i] = pasted[i] || ''
+      newDigits[i] = pasted[i] ?? ''
     }
     setOtpDigits(newDigits)
     // Focus last filled or the next empty
@@ -451,7 +451,7 @@ export default function LoginPage() {
 
       {/* ── OTP Verification Card ───────────────────────────── */}
       {authMode === 'otp' && (
-        <Card className="w-full max-w-md z-10 border-white/10 bg-black/50 backdrop-blur-xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <Card className="w-full max-w-md z-10 border-border bg-card text-card-foreground shadow-xl shadow-slate-900/10 animate-in fade-in slide-in-from-bottom-4 duration-300">
           <CardHeader className="space-y-1 text-center pb-6">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-phosphor/10 border border-phosphor/20">
               <ShieldCheck className="h-7 w-7 text-phosphor" />
@@ -479,7 +479,7 @@ export default function LoginPage() {
                   onChange={(e) => handleOtpChange(i, e.target.value)}
                   onKeyDown={(e) => handleOtpKeyDown(i, e)}
                   onPaste={i === 0 ? handleOtpPaste : undefined}
-                  className="h-14 w-12 rounded-lg border border-white/10 bg-black/50 text-center text-2xl font-mono text-foreground outline-none transition-all duration-200 focus:border-phosphor focus:ring-2 focus:ring-phosphor/30 focus:shadow-[0_0_20px_rgba(0,214,143,0.15)] placeholder:text-white/10"
+                  className="h-14 w-12 rounded-lg border border-input bg-background text-center text-2xl font-mono text-foreground outline-none transition-all duration-200 focus:border-phosphor focus:ring-2 focus:ring-phosphor/30 focus:shadow-[0_0_20px_rgba(0,214,143,0.15)] placeholder:text-muted-foreground"
                   placeholder="·"
                   autoFocus={i === 0}
                 />
@@ -492,7 +492,7 @@ export default function LoginPage() {
             <Button
               onClick={handleVerifyOtp}
               disabled={loading || otpDigits.some((d) => !d)}
-              className="w-full bg-phosphor text-black hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11"
+              className="w-full bg-phosphor text-primary-foreground hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11"
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -535,7 +535,7 @@ export default function LoginPage() {
 
       {/* ── Reset Password Card ─────────────────────────────── */}
       {authMode === 'reset' && (
-        <Card className="w-full max-w-md z-10 border-white/10 bg-black/50 backdrop-blur-xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <Card className="w-full max-w-md z-10 border-border bg-card text-card-foreground shadow-xl shadow-slate-900/10 animate-in fade-in slide-in-from-bottom-4 duration-300">
           <CardHeader className="space-y-1 text-center pb-6">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-phosphor/10 border border-phosphor/20">
               <KeyRound className="h-7 w-7 text-phosphor" />
@@ -564,7 +564,7 @@ export default function LoginPage() {
                   name="new-password"
                   type="password"
                   placeholder="••••••••"
-                  className={`bg-black/50 border-white/10 py-6 transition-colors ${newPasswordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
+                  className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${newPasswordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
                   value={newPassword}
                   onChange={(e) => {
@@ -592,7 +592,7 @@ export default function LoginPage() {
                   name="confirm-password"
                   type="password"
                   placeholder="••••••••"
-                  className={`bg-black/50 border-white/10 py-6 transition-colors ${confirmPasswordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
+                  className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${confirmPasswordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
                   value={confirmPassword}
                   onChange={(e) => {
@@ -613,7 +613,7 @@ export default function LoginPage() {
               <Button
                 onClick={handleResetPassword}
                 disabled={loading}
-                className="w-full bg-phosphor text-black hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11 mt-2"
+                className="w-full bg-phosphor text-primary-foreground hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11 mt-2"
               >
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -628,7 +628,7 @@ export default function LoginPage() {
 
       {/* ── Forgot Password Card ────────────────────────────── */}
       {authMode === 'forgot' && (
-        <Card className="w-full max-w-md z-10 border-white/10 bg-black/50 backdrop-blur-xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <Card className="w-full max-w-md z-10 border-border bg-card text-card-foreground shadow-xl shadow-slate-900/10 animate-in fade-in slide-in-from-bottom-4 duration-300">
           <CardHeader className="space-y-1 text-center pb-6">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-phosphor/10 border border-phosphor/20">
               <Mail className="h-7 w-7 text-phosphor" />
@@ -654,7 +654,7 @@ export default function LoginPage() {
                   name="email"
                   type="email"
                   placeholder="researcher@university.edu"
-                  className={`bg-black/50 border-white/10 py-6 transition-colors ${emailError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
+                  className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${emailError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
                   value={email}
                   onChange={(e) => {
@@ -676,7 +676,7 @@ export default function LoginPage() {
               <Button
                 onClick={handleForgotPassword}
                 disabled={loading}
-                className="w-full bg-phosphor text-black hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11 mt-2"
+                className="w-full bg-phosphor text-primary-foreground hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11 mt-2"
               >
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -705,7 +705,7 @@ export default function LoginPage() {
 
       {/* ── Login / Sign-Up Card ──────────────────────────── */}
       {(authMode === 'login' || authMode === 'signup') && (
-        <Card className="w-full max-w-md z-10 border-white/10 bg-black/50 backdrop-blur-xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <Card className="w-full max-w-md z-10 border-border bg-card text-card-foreground shadow-xl shadow-slate-900/10 animate-in fade-in slide-in-from-bottom-4 duration-300">
           <CardHeader className="space-y-1 text-center pb-8">
             <CardTitle className="text-2xl font-semibold tracking-tight">
               {authMode === 'signup' ? 'Create an account' : 'Welcome back'}
@@ -730,7 +730,7 @@ export default function LoginPage() {
                   name="email"
                   type="email"
                   placeholder="researcher@university.edu"
-                  className={`bg-black/50 border-white/10 py-6 transition-colors ${emailError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
+                  className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${emailError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
                   value={email}
                   onChange={(e) => {
@@ -762,7 +762,7 @@ export default function LoginPage() {
                   name="password"
                   type="password"
                   placeholder="••••••••"
-                  className={`bg-black/50 border-white/10 py-6 transition-colors ${passwordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
+                  className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${passwordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
                   value={password}
                   onChange={(e) => {
@@ -800,7 +800,7 @@ export default function LoginPage() {
                   <Button
                     onClick={handleSignup}
                     disabled={loading}
-                    className="w-full bg-phosphor text-black hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11"
+                    className="w-full bg-phosphor text-primary-foreground hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11"
                   >
                     {loading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -827,7 +827,7 @@ export default function LoginPage() {
                   <Button
                     onClick={handleLogin}
                     disabled={loading}
-                    className="w-full bg-phosphor text-black hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11"
+                    className="w-full bg-phosphor text-primary-foreground hover:bg-phosphor/90 font-semibold transition-all active:scale-[0.98] h-11"
                   >
                     {loading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -853,7 +853,7 @@ export default function LoginPage() {
             </div>
           </CardContent>
 
-          <CardFooter className="flex flex-col gap-4 text-center text-sm text-muted-foreground border-t border-white/5 pt-6">
+          <CardFooter className="flex flex-col gap-4 text-center text-sm text-muted-foreground border-t border-border pt-6">
             <p>
               By continuing, you agree to our{' '}
               <Link href="/terms" className="underline underline-offset-4 hover:text-phosphor">

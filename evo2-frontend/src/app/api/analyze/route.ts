@@ -1,3 +1,8 @@
+import {
+  authorizeAnalysis,
+  analysisAccessFailure,
+} from "~/lib/billing/analysis-access";
+import { billingAdmin } from "~/lib/billing/server";
 import { NextResponse } from "next/server";
 
 import {
@@ -5,7 +10,6 @@ import {
   isVariantPipelineInput,
   type Evo2Prediction,
 } from "~/lib/snv-pipeline";
-import { createPipelineClient } from "~/utils/supabase/admin";
 import { createClient } from "~/utils/supabase/server";
 
 export async function POST(req: Request) {
@@ -36,13 +40,16 @@ export async function POST(req: Request) {
     );
   }
 
+  let permission: Awaited<ReturnType<typeof authorizeAnalysis>> | undefined;
   try {
-    const pipelineClient = createPipelineClient(supabase);
+    permission = await authorizeAnalysis(user.id, parsedBody, false);
+    const pipelineClient = billingAdmin();
     const { normalized, evo2 } = await getEvo2ResultWithCache({
       supabase: pipelineClient,
       input: parsedBody,
     });
 
+    await permission.settle(true);
     return NextResponse.json({
       position: normalized.pos,
       reference: normalized.ref,
@@ -54,6 +61,9 @@ export async function POST(req: Request) {
       cached: evo2.cached,
     });
   } catch (error) {
+    await permission?.settle(false).catch(() => undefined);
+    const denied = analysisAccessFailure(error);
+    if (denied) return denied;
     return NextResponse.json(
       {
         error:

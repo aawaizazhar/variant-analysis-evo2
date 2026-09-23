@@ -160,7 +160,7 @@ export default function KnownVariants({
             </p>
           )}
           <p className="mt-1 text-xs text-muted-foreground/70">
-            Evo2 analysis uses your {formatPlanName(planType)} demo limits.
+            Evo2 analysis uses your {formatPlanName(planType)} plan limits.
           </p>
         </div>
         <Button

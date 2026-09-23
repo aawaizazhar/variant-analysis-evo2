@@ -1,18 +1,17 @@
+import {
+  authorizeAnalysis,
+  analysisAccessFailure,
+} from "~/lib/billing/analysis-access";
+import { billingAdmin } from "~/lib/billing/server";
 import { NextResponse } from "next/server";
 
 import {
   getDiseaseAssociation,
   isVariantPipelineInput,
-  normalizeEvo2Prediction,
-  normalizeVariantInput,
-  type Evo2Result,
+  getEvo2ResultWithCache,
+  persistAnalysisHistory,
 } from "~/lib/snv-pipeline";
-import { createPipelineClient } from "~/utils/supabase/admin";
 import { createClient } from "~/utils/supabase/server";
-
-type DiseaseAssociationBody = Record<string, unknown> & {
-  evo2?: unknown;
-};
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -42,22 +41,35 @@ export async function POST(req: Request) {
     );
   }
 
+  let permission: Awaited<ReturnType<typeof authorizeAnalysis>> | undefined;
   try {
-    const body = parsedBody as DiseaseAssociationBody;
-    const normalized = normalizeVariantInput(parsedBody);
-    const evo2 = parseEvo2Result(body.evo2);
-    const pipelineClient = createPipelineClient(supabase);
+    permission = await authorizeAnalysis(user.id, parsedBody, true);
+    const pipelineClient = billingAdmin();
+    const { normalized, evo2 } = await getEvo2ResultWithCache({
+      supabase: pipelineClient,
+      input: parsedBody,
+    });
     const diseaseResult = await getDiseaseAssociation({
       supabase: pipelineClient,
       normalized,
       evo2,
+      explore: parsedBody.explore_disease_associations === true,
     });
 
+    await persistAnalysisHistory({
+      supabase: pipelineClient,
+      userId: user.id,
+      result: { ...diseaseResult, evo2 },
+    });
+    await permission.settle(true);
     return NextResponse.json({
       ...diseaseResult,
       evo2,
     });
   } catch (error) {
+    await permission?.settle(false).catch(() => undefined);
+    const denied = analysisAccessFailure(error);
+    if (denied) return denied;
     return NextResponse.json(
       {
         error:
@@ -68,49 +80,4 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-}
-
-function parseEvo2Result(value: unknown): Evo2Result {
-  if (!value || typeof value !== "object") {
-    return {
-      prediction: "uncertain",
-      classification: "Uncertain",
-      score: null,
-      confidence: null,
-      delta_score: null,
-      cached: false,
-      raw_prediction: null,
-    };
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const score =
-    typeof candidate.score === "number" && Number.isFinite(candidate.score)
-      ? Math.min(candidate.score, 0.99)
-      : null;
-  const deltaScore =
-    typeof candidate.delta_score === "number" &&
-    Number.isFinite(candidate.delta_score)
-      ? candidate.delta_score
-      : null;
-
-  return {
-    prediction: normalizeEvo2Prediction(candidate.prediction),
-    classification: formatPrediction(normalizeEvo2Prediction(candidate.prediction)),
-    score,
-    confidence: score,
-    delta_score: deltaScore,
-    cached: candidate.cached === true,
-    raw_prediction:
-      typeof candidate.raw_prediction === "string"
-        ? candidate.raw_prediction
-        : null,
-  };
-}
-
-function formatPrediction(prediction: Evo2Result["prediction"]) {
-  return prediction
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }

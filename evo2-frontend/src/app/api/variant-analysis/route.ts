@@ -1,3 +1,8 @@
+import {
+  authorizeAnalysis,
+  analysisAccessFailure,
+} from "~/lib/billing/analysis-access";
+import { billingAdmin } from "~/lib/billing/server";
 import { NextResponse } from "next/server";
 
 import {
@@ -5,13 +10,7 @@ import {
   persistAnalysisHistory,
   runVariantAnalysis,
 } from "~/lib/snv-pipeline";
-import {
-  formatAllowedGenomes,
-  getPlanLimits,
-  isGenomeAllowedForPlan,
-  normalizePlanType,
-} from "~/lib/plans";
-import { createPipelineClient } from "~/utils/supabase/admin";
+
 import { createClient } from "~/utils/supabase/server";
 
 export async function POST(req: Request) {
@@ -42,59 +41,14 @@ export async function POST(req: Request) {
     );
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("plan_type")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profileError) {
-    console.error("Failed to load plan for variant analysis:", profileError.message);
-  }
-
-  const planType = normalizePlanType(profile?.plan_type);
-  const planLimits = getPlanLimits(planType);
-
-  if (!isGenomeAllowedForPlan(planType, parsedBody.genome)) {
-    return NextResponse.json(
-      {
-        error: `${planType === "student" ? "Student" : "Researcher"} plan supports ${formatAllowedGenomes(planType).toLowerCase()} for analysis.`,
-      },
-      { status: 403 },
-    );
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const { count, error: countError } = await supabase
-    .from("prediction_history")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", user.id)
-    .gte("created_at", today.toISOString());
-
-  if (countError) {
-    console.error("Failed to check daily quota:", countError.message);
-    return NextResponse.json(
-      { error: "Could not verify your daily prediction quota." },
-      { status: 500 },
-    );
-  }
-
-  if (count !== null && count >= planLimits.dailyPredictions) {
-    return NextResponse.json(
-      {
-        error: `Daily quota of ${planLimits.dailyPredictions} analyses exceeded for your ${planType} plan. Please try again tomorrow.`,
-      },
-      { status: 429 },
-    );
-  }
-
+  let permission: Awaited<ReturnType<typeof authorizeAnalysis>> | undefined;
   try {
-    const pipelineClient = createPipelineClient(supabase);
+    permission = await authorizeAnalysis(user.id, parsedBody, false);
+    const pipelineClient = billingAdmin();
     const result = await runVariantAnalysis({
       supabase: pipelineClient,
       input: parsedBody,
+      allowDisease: permission.allowDisease,
     });
 
     await persistAnalysisHistory({
@@ -103,8 +57,12 @@ export async function POST(req: Request) {
       result,
     });
 
+    await permission.settle(true);
     return NextResponse.json(result);
   } catch (error) {
+    await permission?.settle(false).catch(() => undefined);
+    const denied = analysisAccessFailure(error);
+    if (denied) return denied;
     const message =
       error instanceof Error ? error.message : "Variant analysis failed";
     const status = isVariantInputError(message) ? 400 : 502;

@@ -22,6 +22,15 @@ class DiseaseCandidate(BaseModel):
     review_score: int | float = 0
     is_transition: int | bool = 0
     position_mod_1000: int | None = None
+    CADD_phred: float | None = None
+    SIFT_score: float | None = None
+    Polyphen2_HDIV_score: float | None = None
+    REVEL_score: float | None = None
+    gnomAD_AF: float | None = None
+    LRT_score: float | None = None
+    PROVEAN_score: float | None = None
+    phyloP100way: float | None = None
+    phastCons100way: float | None = None
 
 
 class DiseaseAssociationRequest(BaseModel):
@@ -94,11 +103,16 @@ disease_image = (
         "numpy",
         "pandas",
         "pydantic",
-        "scikit-learn==1.6.1",
+        "scikit-learn==1.8.0",
+        "requests",
     )
     .add_local_file(
         "model/snv_disease_ranker_no_evo2.joblib",
         remote_path="/root/model/snv_disease_ranker_no_evo2.joblib",
+    )
+    .add_local_file(
+        "model/snv_disease_ranker_advanced.joblib",
+        remote_path="/root/model/snv_disease_ranker_advanced.joblib",
     )
 )
 
@@ -443,18 +457,49 @@ class DiseaseAssociationModel:
 
         model_dir = Path("/root/model")
 
-        model_path = model_dir / "snv_disease_ranker_no_evo2.joblib"
-        self.model_version = "snv_disease_ranker_no_evo2"
+        advanced_path = model_dir / "snv_disease_ranker_advanced.joblib"
+        legacy_path = model_dir / "snv_disease_ranker_no_evo2.joblib"
+        
         self.model = None
         self.model_error = None
 
+        # Biological feature columns used by annotation helpers
+        self.feature_columns = [
+            "CADD_phred",
+            "SIFT_score",
+            "Polyphen2_HDIV_score",
+            "REVEL_score",
+            "gnomAD_AF",
+            "LRT_score",
+            "PROVEAN_score",
+            "phyloP100way",
+            "phastCons100way",
+        ]
+        self.feature_defaults = {
+            "CADD_phred": 0.0,
+            "SIFT_score": 1.0,
+            "Polyphen2_HDIV_score": 0.0,
+            "REVEL_score": 0.0,
+            "gnomAD_AF": 0.0,
+            "LRT_score": 0.0,
+            "PROVEAN_score": 0.0,
+            "phyloP100way": 0.0,
+            "phastCons100way": 0.0,
+        }
+
         print("Loading SNV disease association ranker...")
         try:
-            self.model = joblib.load(model_path)
+            if advanced_path.exists():
+                self.model = joblib.load(advanced_path)
+                self.model_version = "snv_disease_ranker_advanced"
+            else:
+                self.model = joblib.load(legacy_path)
+                self.model_version = "snv_disease_ranker_no_evo2"
         except FileNotFoundError:
+            self.model_version = "unknown"
             self.model_error = (
                 "Missing model artifact: /root/model/"
-                "snv_disease_ranker_no_evo2.joblib"
+                "snv_disease_ranker_advanced.joblib"
             )
             print(self.model_error)
         except Exception as exc:
@@ -1401,52 +1446,117 @@ class DiseaseAssociationModel:
                 or "Disease ranker model is not loaded.",
             }
 
-        if not request.candidates:
-            return {
-                "ranking": [],
-                "model_version": self.model_version,
-                "error": "no_candidates",
-                "detail": "No candidate diseases were provided for ranking.",
-            }
-
-        rows = []
-        for candidate in request.candidates:
-            disease_name = str(candidate.disease_name or "").strip()
-            if not disease_name:
-                continue
-
-            rows.append(
-                {
-                    "chrom": str(candidate.chrom).replace("chr", "").replace("CHR", ""),
-                    "pos": int(candidate.pos),
-                    "ref": str(candidate.ref).strip().upper(),
-                    "alt": str(candidate.alt).strip().upper(),
-                    "gene": str(candidate.gene).strip().upper(),
-                    "disease_name": disease_name,
-                    "review_score": float(candidate.review_score or 0),
-                    "is_transition": int(bool(candidate.is_transition)),
-                    "position_mod_1000": int(
-                        candidate.position_mod_1000
-                        if candidate.position_mod_1000 is not None
-                        else int(candidate.pos) % 1000
-                    ),
+        try:
+            if not request.candidates:
+                return {
+                    "ranking": [],
+                    "model_version": self.model_version,
+                    "error": "no_candidates",
+                    "detail": "No candidate diseases were provided for ranking.",
                 }
-            )
 
-        if not rows:
+            # Fetch shared biological features for all candidates once
+            first_candidate = request.candidates[0]
+            canonical = {
+                "assembly": "hg19",
+                "chromosome": f"chr{first_candidate.chrom}",
+                "position": first_candidate.pos,
+                "ref": first_candidate.ref,
+                "alt": first_candidate.alt,
+                "hgvs_g": f"chr{first_candidate.chrom}:g.{first_candidate.pos}{first_candidate.ref}>{first_candidate.alt}",
+                "gene_symbol": first_candidate.gene,
+            }
+            trace_id = "disease-prediction-trace"
+            annotation_result = self._annotate_variant(canonical, trace_id)
+            shared_features = annotation_result.get("features") or {}
+        except Exception as top_level_exc:
+            import traceback
             return {
                 "ranking": [],
                 "model_version": self.model_version,
-                "error": "no_usable_candidates",
-                "detail": "No usable disease candidates were provided.",
+                "error": "top_level_exception",
+                "detail": traceback.format_exc(),
             }
-
-        features = pd.DataFrame(rows)
 
         try:
-            if hasattr(self.model, "predict_proba"):
-                probabilities = self.model.predict_proba(features)
-                class_order = list(getattr(self.model, "classes_", [0, 1]))
+            rows = []
+            for candidate in request.candidates:
+                disease_name = str(candidate.disease_name or "").strip()
+                if not disease_name:
+                    continue
+
+                rows.append(
+                    {
+                        "chrom": str(candidate.chrom).replace("chr", "").replace("CHR", ""),
+                        "pos": int(candidate.pos),
+                        "ref": str(candidate.ref).strip().upper(),
+                        "alt": str(candidate.alt).strip().upper(),
+                        "gene": str(candidate.gene).strip().upper(),
+                        "disease_name": disease_name,
+                        "review_score": int(candidate.review_score),
+                        "is_transition": int(candidate.is_transition),
+                        "position_mod_1000": (
+                            candidate.position_mod_1000
+                            if candidate.position_mod_1000 is not None
+                            else int(candidate.pos) % 1000
+                        ),
+                        "CADD_phred": float(candidate.CADD_phred) if candidate.CADD_phred is not None else float(shared_features.get("CADD_phred", float('nan')) if shared_features.get("CADD_phred") is not None else float('nan')),
+                        "SIFT_score": float(candidate.SIFT_score) if candidate.SIFT_score is not None else float(shared_features.get("SIFT_score", float('nan')) if shared_features.get("SIFT_score") is not None else float('nan')),
+                        "Polyphen2_HDIV_score": float(candidate.Polyphen2_HDIV_score) if candidate.Polyphen2_HDIV_score is not None else float(shared_features.get("Polyphen2_HDIV_score", float('nan')) if shared_features.get("Polyphen2_HDIV_score") is not None else float('nan')),
+                        "REVEL_score": float(candidate.REVEL_score) if candidate.REVEL_score is not None else float(shared_features.get("REVEL_score", float('nan')) if shared_features.get("REVEL_score") is not None else float('nan')),
+                        "gnomAD_AF": float(candidate.gnomAD_AF) if candidate.gnomAD_AF is not None else float(shared_features.get("gnomAD_AF", float('nan')) if shared_features.get("gnomAD_AF") is not None else float('nan')),
+                        "LRT_score": float(candidate.LRT_score) if candidate.LRT_score is not None else float(shared_features.get("LRT_score", float('nan')) if shared_features.get("LRT_score") is not None else float('nan')),
+                        "PROVEAN_score": float(candidate.PROVEAN_score) if candidate.PROVEAN_score is not None else float(shared_features.get("PROVEAN_score", float('nan')) if shared_features.get("PROVEAN_score") is not None else float('nan')),
+                        "phyloP100way": float(candidate.phyloP100way) if candidate.phyloP100way is not None else float(shared_features.get("phyloP100way", float('nan')) if shared_features.get("phyloP100way") is not None else float('nan')),
+                        "phastCons100way": float(candidate.phastCons100way) if candidate.phastCons100way is not None else float(shared_features.get("phastCons100way", float('nan')) if shared_features.get("phastCons100way") is not None else float('nan')),
+                    }
+                )
+
+            if not rows:
+                return {
+                    "ranking": [],
+                    "model_version": self.model_version,
+                    "error": "no_valid_candidates",
+                    "detail": "None of the candidates had a valid disease name.",
+                }
+
+            features = pd.DataFrame(rows)
+
+            if isinstance(self.model, dict):
+                clf = self.model["model"]
+                expected_cols = self.model["feature_columns"]
+                cat_features = self.model.get("categorical_features", [])
+                
+                # Add hashed columns for high-cardinality categoricals
+                features["gene_hash"] = features["gene"].apply(lambda x: hash(str(x)) % 200)
+                features["disease_name_hash"] = features["disease_name"].apply(lambda x: hash(str(x)) % 200)
+
+                for col in cat_features:
+                    if col in features.columns:
+                        features[col] = features[col].astype(str).astype("category")
+
+                # Reorder features exactly as training
+                X = features[expected_cols]
+            else:
+                clf = self.model
+                X = features.drop(columns=["chrom", "pos", "ref", "alt", "gene", "disease_name"])
+                # Fallback for old model
+                for col in ["chrom", "pos", "ref", "alt", "gene", "disease_name", "CADD_phred", "SIFT_score", "Polyphen2_HDIV_score", "REVEL_score", "gnomAD_AF", "LRT_score", "PROVEAN_score", "phyloP100way", "phastCons100way", "gene_hash", "disease_name_hash"]:
+                    if col in X.columns:
+                        X = X.drop(columns=[col])
+        except Exception as data_prep_exc:
+            import traceback
+            return {
+                "ranking": [],
+                "model_version": self.model_version,
+                "error": "data_prep_exception",
+                "detail": traceback.format_exc(),
+            }
+
+        try:
+            if hasattr(clf, "predict_proba"):
+                probabilities = clf.predict_proba(X)
+                class_order = list(getattr(clf, "classes_", [0, 1]))
                 positive_index = (
                     class_order.index(1)
                     if 1 in class_order
@@ -1454,7 +1564,7 @@ class DiseaseAssociationModel:
                 )
                 scores = probabilities[:, positive_index]
             else:
-                scores = self.model.predict(features)
+                scores = clf.predict(X)
         except Exception as exc:
             return {
                 "ranking": [],

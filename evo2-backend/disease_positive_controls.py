@@ -8,7 +8,7 @@ POSITIVE_CONTROLS = [
     {
         "name": "HBB rs334 candidate ranking",
         "payload": {
-            "model_version": "snv_disease_ranker_no_evo2",
+            "model_version": "snv_disease_ranker_advanced",
             "candidates": [
                 {
                     "chrom": "11",
@@ -51,6 +51,9 @@ def main() -> int:
             timeout=60,
         )
         print(f"{control['name']}: HTTP {response.status_code}")
+        if response.status_code != 200:
+            print("Error details:")
+            print(response.text)
         response.raise_for_status()
 
         result = response.json()

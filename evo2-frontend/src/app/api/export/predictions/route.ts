@@ -1,6 +1,8 @@
+import { toCsv, type PredictionHistoryRow } from "~/lib/prediction-csv";
 import { NextResponse } from "next/server";
 
-import { getPlanLimits, normalizePlanType } from "~/lib/plans";
+import { getPlanLimits } from "~/lib/plans";
+import { ACTIVE_ACCESS_PLAN } from "~/lib/app-access";
 import { createClient } from "~/utils/supabase/server";
 
 /** Columns needed for CSV export, with fallbacks for older history schemas. */
@@ -31,32 +33,6 @@ const EXPORT_COLUMN_SETS = [
 /** Safety cap for export rows. */
 const EXPORT_ROW_LIMIT = 5000;
 
-const CSV_HEADERS = [
-  "Date",
-  "Genome Assembly",
-  "Chromosome",
-  "Variant Position",
-  "Reference",
-  "Alternative",
-  "Variant Type",
-  "Genomic HGVS",
-  "rsID",
-  "ClinVar Variation ID",
-  "Gene Symbol",
-  "Transcript ID",
-  "Source",
-  "Prediction",
-  "Delta Score",
-  "Confidence",
-  "ClinVar Evidence",
-  "Disease Model Ranking",
-  "Final Interpretation Level",
-  "Final Interpretation",
-  "Dataset Quality Flags",
-];
-
-type PredictionHistoryRow = Record<string, unknown>;
-
 function formatDateForFilename(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -70,218 +46,6 @@ function isMissingColumnError(error: { message?: string } | null | undefined) {
   );
 }
 
-function readString(row: PredictionHistoryRow, keys: string[]) {
-  for (const key of keys) {
-    const value = row[key];
-
-    if (typeof value === "string") {
-      return value;
-    }
-
-    if (
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      typeof value === "bigint"
-    ) {
-      return String(value);
-    }
-  }
-
-  return "";
-}
-
-function readJsonString(row: PredictionHistoryRow, key: string) {
-  const value = row[key];
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "";
-  }
-}
-
-function readFinalInterpretationLevel(row: PredictionHistoryRow) {
-  const value = row.final_interpretation;
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const level = (value as Record<string, unknown>).level;
-    return typeof level === "string" ? level : "";
-  }
-
-  return "";
-}
-
-function readFinalInterpretationMessage(row: PredictionHistoryRow) {
-  const value = row.final_interpretation;
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const message = (value as Record<string, unknown>).message;
-    return typeof message === "string" ? message : "";
-  }
-
-  return "";
-}
-
-function sanitizeCsvValue(value: string) {
-  if (/^[\s]*[=+\-@\t\r]/.test(value)) {
-    return `'${value}`;
-  }
-
-  return value;
-}
-
-function escapeCsvValue(value: string) {
-  const sanitizedValue = sanitizeCsvValue(value);
-  const shouldQuote = /[",\r\n]/.test(sanitizedValue);
-  const escapedValue = sanitizedValue.replaceAll('"', '""');
-
-  return shouldQuote ? `"${escapedValue}"` : escapedValue;
-}
-
-function formatCsvDate(value: string) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toISOString();
-}
-
-function variantIdentity(row: PredictionHistoryRow) {
-  const genome = readString(row, ["genome_assembly", "genome"]).toLowerCase();
-  const chromosome = readString(row, ["chromosome"]).toLowerCase();
-  const position = readString(row, ["variant_position", "position"]);
-  const reference = readString(row, [
-    "reference",
-    "reference_allele",
-    "variant_reference",
-    "ref",
-  ]).toUpperCase();
-  const alternative = readString(row, [
-    "alternative",
-    "alternative_allele",
-    "variant_alternative",
-    "alt",
-  ]).toUpperCase();
-
-  if (!genome || !chromosome || !position || !reference || !alternative) {
-    return "";
-  }
-
-  return `${genome}:${chromosome}:${position}:${reference}>${alternative}`;
-}
-
-function findDuplicateVariantKeys(rows: PredictionHistoryRow[]) {
-  const counts = new Map<string, number>();
-
-  for (const row of rows) {
-    const key = variantIdentity(row);
-    if (!key) continue;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-
-  return new Set(
-    [...counts.entries()]
-      .filter(([, count]) => count > 1)
-      .map(([key]) => key),
-  );
-}
-
-function getDatasetQualityFlags(
-  row: PredictionHistoryRow,
-  duplicateVariantKeys: Set<string>,
-) {
-  const flags: string[] = [];
-  const chromosome = readString(row, ["chromosome"]);
-  const position = readString(row, ["variant_position", "position"]);
-  const reference = readString(row, [
-    "reference",
-    "reference_allele",
-    "variant_reference",
-    "ref",
-  ]).toUpperCase();
-  const alternative = readString(row, [
-    "alternative",
-    "alternative_allele",
-    "variant_alternative",
-    "alt",
-  ]).toUpperCase();
-  const variantType = readString(row, ["variant_type"]);
-  const hasStableIdentifier = !!(
-    readString(row, ["hgvs_g"]) ||
-    readString(row, ["rsid", "rs_id"]) ||
-    readString(row, ["clinvar_variation_id", "clinvar_id"])
-  );
-  const identity = variantIdentity(row);
-
-  if (!position) flags.push("missing_position");
-  if (!reference) flags.push("missing_ref");
-  if (!alternative) flags.push("missing_alt");
-  if (reference && alternative && reference === alternative) {
-    flags.push("reference_equals_alternate");
-  }
-  if (chromosome && !/^(chr)?([0-9]+|x|y|m|mt)$/i.test(chromosome)) {
-    flags.push("invalid_chromosome");
-  }
-  if (reference && !/^[ACGT]+$/.test(reference)) flags.push("invalid_ref");
-  if (alternative && !/^[ACGT]+$/.test(alternative)) flags.push("invalid_alt");
-  if (
-    (variantType && variantType.toUpperCase() !== "SNV") ||
-    reference.length > 1 ||
-    alternative.length > 1
-  ) {
-    flags.push("unsupported_variant_type");
-  }
-  if (!hasStableIdentifier && !identity) flags.push("missing_identifier");
-  if (identity && duplicateVariantKeys.has(identity)) flags.push("duplicate_variant");
-
-  return flags.length ? flags.join(";") : "ok";
-}
-
-function toCsv(rows: PredictionHistoryRow[]) {
-  const duplicateVariantKeys = findDuplicateVariantKeys(rows);
-  const csvRows = [
-    CSV_HEADERS,
-    ...rows.map((row) => [
-      formatCsvDate(readString(row, ["created_at", "date"])),
-      readString(row, ["genome_assembly", "genome"]),
-      readString(row, ["chromosome"]),
-      readString(row, ["variant_position", "position"]),
-      readString(row, ["reference", "reference_allele", "variant_reference", "ref"]),
-      readString(row, ["alternative", "alternative_allele", "variant_alternative", "alt"]),
-      readString(row, ["variant_type"]),
-      readString(row, ["hgvs_g"]),
-      readString(row, ["rsid", "rs_id"]),
-      readString(row, ["clinvar_variation_id", "clinvar_id"]),
-      readString(row, ["gene_symbol", "gene"]),
-      readString(row, ["transcript_id"]),
-      readString(row, ["source"]),
-      readString(row, ["prediction"]),
-      readString(row, ["delta_score"]),
-      readString(row, ["confidence", "classification_confidence"]),
-      readJsonString(row, "clinvar_evidence"),
-      readJsonString(row, "disease_model_ranking"),
-      readFinalInterpretationLevel(row),
-      readFinalInterpretationMessage(row),
-      getDatasetQualityFlags(row, duplicateVariantKeys),
-    ]),
-  ];
-
-  return csvRows
-    .map((row) => row.map((value) => escapeCsvValue(value)).join(","))
-    .join("\r\n");
-}
-
 async function fetchPredictionRowsForExport(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
@@ -291,7 +55,7 @@ async function fetchPredictionRowsForExport(
   for (const columns of EXPORT_COLUMN_SETS) {
     const { data, error } = await supabase
       .from("prediction_history")
-      .select(columns as string)
+      .select(columns)
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(EXPORT_ROW_LIMIT);
@@ -326,18 +90,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("plan_type")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profileError) {
-    console.error("Failed to load plan for CSV export:", profileError.message);
-  }
-
-  const planType = normalizePlanType(profile?.plan_type);
-  const planLimits = getPlanLimits(planType);
+  const planLimits = getPlanLimits(ACTIVE_ACCESS_PLAN);
 
   if (!planLimits.csvExport) {
     return NextResponse.json(

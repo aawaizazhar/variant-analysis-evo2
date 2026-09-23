@@ -99,3 +99,9 @@ create policy "Users can create their own profile"
   on public.profiles
   for insert
   with check (auth.uid() = id);
+
+-- Authentication creates profiles through the trigger. Browser users may only
+-- change presentation preferences, never entitlement columns.
+revoke insert, update, delete on public.profiles from public, anon, authenticated;
+grant update(full_name, display_name, theme_preference, email_notifications, updated_at)
+  on public.profiles to authenticated;

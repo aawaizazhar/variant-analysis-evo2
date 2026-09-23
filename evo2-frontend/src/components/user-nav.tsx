@@ -2,7 +2,8 @@
 
 import * as React from "react"
 import { useTransition } from "react"
-import { useAuth } from "~/providers/auth-provider"
+import type { UserProfile } from "~/providers/auth-provider"
+import type { User } from "@supabase/supabase-js"
 import { logout } from "~/app/auth/signout/logout-action"
 import {
   DropdownMenu,
@@ -23,11 +24,12 @@ import {
 } from "~/components/ui/dialog"
 import { Button } from "~/components/ui/button"
 import { CreditCard, LogOut, User as UserIcon, Shield } from "lucide-react"
+import { ACTIVE_ACCESS_LABEL } from "~/lib/app-access"
 import { useRouter } from "next/navigation"
 
 interface UserNavProps {
-  user: any
-  profile: any
+  user: User
+  profile: UserProfile | null
   isCollapsed?: boolean
 }
 
@@ -36,13 +38,9 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
   const [isPending, startTransition] = useTransition()
   const router = useRouter()
 
-  const displayLabel =
-    profile?.display_name?.trim() ||
-    profile?.full_name?.trim() ||
-    user.email ||
-    "User"
+  const displayLabel = [profile?.display_name?.trim(), profile?.full_name?.trim(), user.email]
+    .find((value): value is string => typeof value === 'string' && value.length > 0) ?? "User"
   const initials = displayLabel.charAt(0).toUpperCase()
-  const planType = profile?.plan_type || 'student'
 
   return (
     <>
@@ -50,7 +48,7 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
         {!isCollapsed && (
             <div className="flex items-center gap-2 px-2 py-1 mb-1 rounded-full bg-phosphor/10 border border-phosphor/20 w-fit">
                 <Shield className="h-3 w-3 text-phosphor" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-phosphor">{planType} Plan</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-phosphor">{ACTIVE_ACCESS_LABEL}</span>
             </div>
         )}
         
@@ -65,7 +63,7 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
                 {!isCollapsed && (
                 <div className="ml-3 text-left overflow-hidden">
                     <p className="text-sm font-medium text-foreground truncate">{displayLabel}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{planType} Account</p>
+                    <p className="text-xs text-muted-foreground">{ACTIVE_ACCESS_LABEL}</p>
                 </div>
                 )}
             </button>
@@ -80,7 +78,7 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
                     </p>
                 )}
                 <p className="text-xs leading-none text-muted-foreground uppercase tracking-tighter">
-                    {planType} PLAN
+                    {ACTIVE_ACCESS_LABEL}
                 </p>
                 </div>
             </DropdownMenuLabel>
@@ -97,7 +95,7 @@ export function UserNav({ user, profile, isCollapsed }: UserNavProps) {
                 onClick={() => router.push('/settings?section=plan')}
             >
                 <CreditCard className="mr-2 h-4 w-4 text-muted-foreground group-hover:text-phosphor" />
-                <span>Plan Settings</span>
+                <span>Billing &amp; Access</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem 

@@ -1,15 +1,15 @@
+import {
+  authorizeAnalysis,
+  analysisAccessFailure,
+} from "~/lib/billing/analysis-access";
+import { billingAdmin } from "~/lib/billing/server";
 import { NextResponse } from "next/server";
 
 import {
   getEvo2ResultWithCache,
   isVariantPipelineInput,
 } from "~/lib/snv-pipeline";
-import {
-  formatAllowedGenomes,
-  isGenomeAllowedForPlan,
-  normalizePlanType,
-} from "~/lib/plans";
-import { createPipelineClient } from "~/utils/supabase/admin";
+
 import { createClient } from "~/utils/supabase/server";
 
 export async function POST(req: Request) {
@@ -40,29 +40,16 @@ export async function POST(req: Request) {
     );
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("plan_type")
-    .eq("id", user.id)
-    .maybeSingle();
-  const planType = normalizePlanType(profile?.plan_type);
-
-  if (!isGenomeAllowedForPlan(planType, parsedBody.genome)) {
-    return NextResponse.json(
-      {
-        error: `${planType === "student" ? "Student" : "Researcher"} plan supports ${formatAllowedGenomes(planType).toLowerCase()} for analysis.`,
-      },
-      { status: 403 },
-    );
-  }
-
+  let permission: Awaited<ReturnType<typeof authorizeAnalysis>> | undefined;
   try {
-    const pipelineClient = createPipelineClient(supabase);
+    permission = await authorizeAnalysis(user.id, parsedBody, false);
+    const pipelineClient = billingAdmin();
     const { normalized, evo2, warnings } = await getEvo2ResultWithCache({
       supabase: pipelineClient,
       input: parsedBody,
     });
 
+    await permission.settle(true);
     return NextResponse.json({
       variant_key: normalized.variant_key,
       gene: normalized.gene,
@@ -71,10 +58,15 @@ export async function POST(req: Request) {
       warnings,
     });
   } catch (error) {
+    await permission?.settle(false).catch(() => undefined);
+    const denied = analysisAccessFailure(error);
+    if (denied) return denied;
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : "Failed to run Evo2 prediction",
+          error instanceof Error
+            ? error.message
+            : "Failed to run Evo2 prediction",
       },
       { status: 502 },
     );

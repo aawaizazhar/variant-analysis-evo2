@@ -38,10 +38,9 @@ import { useDebounce } from "~/hooks/use-debounce";
 import {
   formatAllowedGenomes,
   isGenomeAllowedForPlan,
-  normalizePlanType,
   planAllowsAllGenomes,
 } from "~/lib/plans";
-import { useAuth } from "~/providers/auth-provider";
+import { ACTIVE_ACCESS_PLAN } from "~/lib/app-access";
 
 type Mode = "browse" | "search";
 
@@ -77,8 +76,6 @@ const TableSkeleton = ({ rows = 5 }: { rows?: number }) => (
 );
 
 export default function HomePage() {
-  const auth = useAuth();
-  const profile = auth.profile;
   const [selectedGenome, setSelectedGenome] = useState<string>("hg38");
   const [selectedChromosome, setSelectedChromosome] = useState<string>("");
   const [selectedGene, setSelectedGene] = useState<GeneFromSearch | null>(null);
@@ -133,7 +130,7 @@ export default function HomePage() {
     staleTime: 1000 * 60 * 15,
   });
 
-  const planType = normalizePlanType(profile?.plan_type);
+  const planType = ACTIVE_ACCESS_PLAN;
   const chromosomes = useMemo(
     () => chromosomeResponse?.chromosomes ?? [],
     [chromosomeResponse],
@@ -386,7 +383,7 @@ export default function HomePage() {
                         )}
                         {planType === "student" ? (
                           <p className="mt-3 text-sm text-amber-300">
-                            Student demo is limited to hg38. Upgrade to
+                            Student is limited to hg38. Upgrade to
                             Researcher Demo in Settings to use{" "}
                             {formatAllowedGenomes("researcher").toLowerCase()}.
                           </p>

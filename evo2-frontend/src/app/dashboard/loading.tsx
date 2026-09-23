@@ -24,7 +24,7 @@ export default function DashboardLoading() {
             <div className="p-6">
               <Skeleton className="h-7 w-48 mb-6" />
               <div className="space-y-4">
-                {[...Array(5)].map((_, i) => (
+                {Array.from({ length: 5 }).map((_, i) => (
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>

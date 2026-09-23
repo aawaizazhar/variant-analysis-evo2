@@ -84,6 +84,7 @@ export interface DiseaseAssociationInput {
   transcript_id?: string;
   source?: string;
   evo2?: Evo2Analysis;
+  explore_disease_associations?: boolean;
 }
 
 export interface CanonicalVariant {
@@ -136,6 +137,7 @@ export interface NormalizedVariant {
 }
 
 export interface ClinvarDiseaseEvidence {
+  last_evaluated?: string | null;
   disease_name: string;
   disease_id: string | null;
   clinical_significance: string | null;
@@ -158,10 +160,17 @@ export interface FinalInterpretation {
   message: string;
   confidence_explanation: string;
   warning: string;
+  ranking_policy?: import("~/lib/disease-ranking-policy").RankingPolicy;
+  ranking_policy_version?: number;
+  ranking_status?: DiseaseAssociationStatus;
 }
 
 export type DiseaseAssociationStatus =
+  | "plan_locked"
   | "available"
+  | "skipped_benign"
+  | "skipped_uncertain"
+  | "exploratory_uncertain"
   | "unsupported_gene"
   | "no_evidence_found"
   | "model_unavailable";
@@ -714,9 +723,10 @@ export async function analyzeVariantWithAPI({
 
   if (!response.ok && source === "clinvar") {
     const errorText = await response.text();
-    const sameReferenceError = /Alternative base must be different from the reference base/i.test(
-      errorText,
-    );
+    const sameReferenceError =
+      /Alternative base must be different from the reference base/i.test(
+        errorText,
+      );
     const complementedAlternative = complementBase(alternative);
 
     if (
@@ -730,7 +740,9 @@ export async function analyzeVariantWithAPI({
         return (await retryResponse.json()) as AnalysisResult;
       }
 
-      throw new Error(await parseApiError(retryResponse, "Failed to analyze variant"));
+      throw new Error(
+        await parseApiError(retryResponse, "Failed to analyze variant"),
+      );
     }
 
     throw new Error(parseErrorText(errorText, "Failed to analyze variant"));
@@ -781,9 +793,7 @@ export async function analyzeVariantPipelineWithAPI(
   });
 
   if (!response.ok) {
-    throw new Error(
-      await parseApiError(response, "Failed to analyze variant"),
-    );
+    throw new Error(await parseApiError(response, "Failed to analyze variant"));
   }
 
   return (await response.json()) as VariantAnalysisResult;

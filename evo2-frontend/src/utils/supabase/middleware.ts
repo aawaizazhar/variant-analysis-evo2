@@ -15,7 +15,7 @@ export async function updateSession(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({
             request,
           })
@@ -27,8 +27,29 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  // Fetching the user immediately causes the session to be validated and refreshed.
-  await supabase.auth.getUser().catch(() => null)
+  // Validate the token with Supabase rather than trusting the session cookie.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }))
+
+  const pathname = request.nextUrl.pathname
+  const requiresUser =
+    pathname === '/' ||
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/settings') ||
+    pathname.startsWith('/billing')
+
+  if (requiresUser && !user) {
+    const loginUrl = request.nextUrl.clone()
+    loginUrl.pathname = '/login'
+    loginUrl.search = ''
+    const redirectResponse = NextResponse.redirect(loginUrl)
+    // Keep any refreshed/cleared auth cookies produced during validation.
+    for (const cookie of supabaseResponse.cookies.getAll()) {
+      redirectResponse.cookies.set(cookie)
+    }
+    return redirectResponse
+  }
 
   return supabaseResponse
 }

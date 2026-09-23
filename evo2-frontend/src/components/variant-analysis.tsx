@@ -152,34 +152,34 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
     };
 
     return (
-      <Card className="gap-0 border-border/50 bg-card py-0 shadow-sm">
+      <Card className="border-border/50 bg-card gap-0 py-0 shadow-sm">
         <CardHeader className="pt-4 pb-2">
-          <CardTitle className="text-sm font-normal text-muted-foreground">
+          <CardTitle className="text-muted-foreground text-sm font-normal">
             DNAAnalyzer
           </CardTitle>
         </CardHeader>
         <CardContent className="pb-4">
-          <p className="mb-4 text-xs text-muted-foreground">
+          <p className="text-muted-foreground mb-4 text-xs">
             Predict the impact of genetic variants using the Evo2 deep learning
             model.
             <span className="mt-1 block">
-              {formatPlanName(planType)} demo:{" "}
+              {formatPlanName(planType)} plan:{" "}
               {planLimits.dailyPredictions.toLocaleString()} predictions/day.
             </span>
           </p>
           <div className="flex flex-wrap items-end gap-4">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
+              <label className="text-muted-foreground mb-1 block text-xs">
                 Position
               </label>
               <Input
                 value={variantPosition}
                 onChange={handlePositionChange}
-                className="h-8 w-32 border-border/50 text-xs"
+                className="border-border/50 h-8 w-32 text-xs"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
+              <label className="text-muted-foreground mb-1 block text-xs">
                 Alternative (variant)
               </label>
               <Input
@@ -188,13 +188,13 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                 onChange={(e) =>
                   setVariantAlternative(e.target.value.toUpperCase())
                 }
-                className="h-8 w-32 border-border/50 text-xs"
+                className="border-border/50 h-8 w-32 text-xs"
                 placeholder="e.g., T"
                 maxLength={1}
               />
             </div>
             {variantReference && (
-              <div className="mb-2 flex items-center gap-2 text-xs text-foreground">
+              <div className="text-foreground mb-2 flex items-center gap-2 text-xs">
                 <span>Substitution</span>
                 <span
                   className={`font-medium ${getNucleotideColorClass(variantReference)}`}
@@ -211,7 +211,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
             )}
             <Button
               disabled={isAnalyzing || !variantPosition || !variantAlternative}
-              className="h-8 cursor-pointer bg-primary text-xs text-primary-foreground hover:bg-primary/90"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 h-8 cursor-pointer text-xs"
               onClick={() =>
                 void handleVariantSubmit(
                   variantPosition.replaceAll(",", ""),
@@ -221,7 +221,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
             >
               {isAnalyzing ? (
                 <>
-                  <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent align-middle"></span>
+                  <span className="border-primary-foreground mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-t-transparent align-middle"></span>
                   Analyzing...
                 </>
               ) : (
@@ -255,25 +255,25 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                 return (
                   <div
                     key={matchedVariant.clinvar_id}
-                    className="mt-4 rounded-md border border-border/50 bg-muted/50 p-4"
+                    className="border-border/50 bg-muted/50 mt-4 rounded-md border p-4"
                   >
                     <div className="mb-3 flex items-center justify-between">
-                      <h4 className="text-sm font-medium text-foreground">
+                      <h4 className="text-foreground text-sm font-medium">
                         Known Variant Detected
                       </h4>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-muted-foreground text-xs">
                         Position: {matchedVariant.location}
                       </span>
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-xs font-medium text-muted-foreground">
+                        <div className="text-muted-foreground mb-1 text-xs font-medium">
                           Variant Details
                         </div>
                         <div className="text-sm">{matchedVariant.title}</div>
                         <div className="mt-2 text-sm">
-                      {gene?.symbol} {variantPosition}{" "}
+                          {gene?.symbol} {variantPosition}{" "}
                           <span className="font-mono">
                             <span className={getNucleotideColorClass(ref)}>
                               {ref}
@@ -284,7 +284,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                             </span>
                           </span>
                         </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
+                        <div className="text-muted-foreground mt-2 text-xs">
                           ClinVar classification
                           <span
                             className={`ml-1 rounded-sm px-2 py-0.5 ${getClassificationColorClasses(matchedVariant.classification)}`}
@@ -298,7 +298,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                           disabled={isAnalyzing}
                           variant="outline"
                           size="sm"
-                          className="h-7 cursor-pointer border-border/50 bg-card text-xs text-foreground hover:bg-muted"
+                          className="border-border/50 bg-card text-foreground hover:bg-muted h-7 cursor-pointer text-xs"
                           onClick={() => {
                             setVariantAlternative(alt);
                             setVariantReference(ref);
@@ -315,7 +315,7 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
                         >
                           {isAnalyzing ? (
                             <>
-                              <span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary align-middle"></span>
+                              <span className="border-muted-foreground/30 border-t-primary mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 align-middle"></span>
                               Analyzing...
                             </>
                           ) : (
@@ -336,73 +336,81 @@ const VariantAnalysis = forwardRef<VariantAnalysisHandle, VariantAnalysisProps>(
             </div>
           )}
           {variantResult && (
-            <div className="mt-6 rounded-md border border-border/50 bg-muted/50 p-4">
-              <h4 className="mb-3 text-sm font-medium text-foreground">
-                Evo2 Pathogenicity Result
-              </h4>
-              <div className="grid gap-4 md:grid-cols-2">
+            <div className="border-border/80 bg-card mt-6 overflow-hidden rounded-2xl border p-4 shadow-sm sm:p-6">
+              <header className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <div className="mb-2">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      Variant
-                    </div>
-                    <div className="text-sm">
-                      {gene?.symbol} {variantResult.normalized_variant.pos}{" "}
-                      <span className="font-mono">
-                        {variantResult.normalized_variant.ref}
-                        {">"}
-                        {variantResult.normalized_variant.alt}
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground">
-                      Delta likelihood score
-                    </div>
-                    <div className="text-sm">
-                      {typeof variantResult.evo2.delta_score === "number"
-                        ? variantResult.evo2.delta_score.toFixed(6)
-                        : "Unavailable"}
-                    </div>
-                    <div className="text-xs text-muted-foreground/80">
-                      Negative score indicates loss of function
-                    </div>
-                  </div>
+                  <p className="text-muted-foreground text-[10px] font-semibold tracking-[0.16em] uppercase">
+                    Evo2 analysis
+                  </p>
+                  <h4 className="text-foreground mt-1.5 text-lg font-semibold tracking-tight">
+                    Variant interpretation
+                  </h4>
                 </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    Prediction
-                  </div>
-                  <div
-                    className={`inline-block rounded-lg px-3 py-1 text-xs ${getClassificationColorClasses(variantResult.evo2.prediction)}`}
-                  >
+                <span className="border-border text-muted-foreground rounded-full border px-2.5 py-1 text-[11px]">
+                  Computational prediction
+                </span>
+              </header>
+
+              <div className="bg-muted/40 mt-5 grid gap-5 rounded-xl p-4 sm:grid-cols-2 sm:gap-6 sm:p-5">
+                <div className="min-w-0">
+                  <p className="text-muted-foreground text-xs">
+                    Analyzed variant
+                  </p>
+                  <p className="text-foreground mt-2 text-base font-semibold break-words">
+                    {variantResult.gene ?? gene?.symbol ?? "Gene not supplied"}
+                  </p>
+                  <p className="text-muted-foreground mt-1 font-mono text-xs leading-relaxed break-all">
+                    chr{variantResult.normalized_variant.chrom}:
+                    {variantResult.normalized_variant.pos.toLocaleString(
+                      "en-US",
+                    )}
+                    <span className="text-foreground ml-2 font-medium">
+                      {variantResult.normalized_variant.ref}
+                      {">"}
+                      {variantResult.normalized_variant.alt}
+                    </span>
+                  </p>
+                </div>
+                <div className="border-border/70 border-t pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5">
+                  <p className="text-muted-foreground text-xs">
+                    Evo2 prediction
+                  </p>
+                  <p className="text-foreground mt-2 text-lg font-semibold tracking-tight">
                     {variantResult.evo2.classification}
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      Confidence
-                    </div>
-                    <div className="mt-1 h-2 w-full rounded-full bg-elevated">
-                      <div
-                        className={`h-2 rounded-full ${variantResult.evo2.prediction.includes("pathogenic") ? "bg-red-600" : "bg-green-600"}`}
-                        style={{
-                          width: `${Math.min(99, (variantResult.evo2.confidence ?? 0) * 100)}%`,
-                        }}
-                      ></div>
-                    </div>
-                    <div className="mt-1 text-right text-xs text-muted-foreground/80">
-                      {Math.round(
-                        (variantResult.evo2.confidence ?? 0) * 100,
-                      )}
-                      %
-                    </div>
-                  </div>
+                  </p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Requires clinical evidence for interpretation
+                  </p>
                 </div>
               </div>
 
-              <DiseaseAssociationPanel
-                result={variantResult}
-              />
+              <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-2">
+                <div>
+                  <dt className="text-muted-foreground text-[11px] font-medium">
+                    Delta likelihood
+                  </dt>
+                  <dd className="text-foreground mt-1.5 font-mono text-sm break-all tabular-nums">
+                    {variantResult.evo2.delta_score?.toFixed(6) ??
+                      "Unavailable"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground text-[11px] font-medium">
+                    Model score{" "}
+                    <span className="font-normal">/ uncalibrated</span>
+                  </dt>
+                  <dd className="text-foreground mt-1.5 font-mono text-sm tabular-nums">
+                    {variantResult.evo2.confidence?.toFixed(3) ?? "Unavailable"}
+                  </dd>
+                </div>
+              </dl>
+              <p className="text-muted-foreground mt-3 max-w-[72ch] text-[11px] leading-relaxed">
+                Negative delta scores indicate lower sequence likelihood, not
+                confirmed loss of function. Model scores are not disease-risk
+                probabilities.
+              </p>
+
+              <DiseaseAssociationPanel result={variantResult} />
             </div>
           )}
         </CardContent>

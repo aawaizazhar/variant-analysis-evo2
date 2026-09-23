@@ -1,3 +1,10 @@
+import {
+  diseaseRankingPolicy,
+  normalizePrediction,
+  rankingPolicyMessage,
+  RESEARCH_WARNING,
+  type RankingPolicy,
+} from "./disease-ranking-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type Evo2Prediction =
@@ -27,6 +34,7 @@ export type VariantPipelineInput = {
   hgvs_g?: string;
   transcript_id?: string;
   source?: string;
+  explore_disease_associations?: boolean;
 };
 
 export type NormalizedVariant = {
@@ -64,6 +72,7 @@ export type ClinvarEvidence = {
   variation_id: string | null;
   rsid: string | null;
   source: string;
+  last_evaluated?: string | null;
 };
 
 export type DiseaseModelCandidate = {
@@ -89,10 +98,17 @@ export type FinalInterpretation = {
   message: string;
   confidence_explanation: string;
   warning: string;
+  ranking_policy?: RankingPolicy;
+  ranking_policy_version?: number;
+  ranking_status?: DiseaseAssociationStatus;
 };
 
 export type DiseaseAssociationStatus =
+  | "plan_locked"
   | "available"
+  | "skipped_benign"
+  | "skipped_uncertain"
+  | "exploratory_uncertain"
   | "unsupported_gene"
   | "no_evidence_found"
   | "model_unavailable";
@@ -128,6 +144,7 @@ type ModalEvo2Result = {
 };
 
 type ClinvarLookupRow = {
+  last_evaluated?: unknown;
   variant_key?: unknown;
   gene?: unknown;
   chrom?: unknown;
@@ -152,7 +169,8 @@ type DiseaseRankerResponse = {
   detail?: unknown;
 };
 
-const DISEASE_MODEL_VERSION = "snv_disease_ranker_no_evo2";
+const DISEASE_MODEL_VERSION = "snv_disease_ranker_advanced";
+const DISEASE_CACHE_POLICY_VERSION = 1;
 const MIN_HIGH_DISEASE_SCORE = 0.75;
 const MAX_DISPLAY_SCORE = 0.99;
 
@@ -182,6 +200,8 @@ export function isVariantPipelineInput(
   const candidate = value as Record<string, unknown>;
 
   return (
+    (candidate.explore_disease_associations === undefined ||
+      typeof candidate.explore_disease_associations === "boolean") &&
     typeof candidate.variant_position === "number" &&
     Number.isFinite(candidate.variant_position) &&
     typeof candidate.reference === "string" &&
@@ -210,16 +230,23 @@ export function normalizeVariantInput(
   const alt = input.alternative.trim().toUpperCase();
   const gene = normalizeGeneSymbol(input.gene_symbol ?? input.gene);
 
-  if (!Number.isInteger(input.variant_position) || input.variant_position <= 0) {
+  if (
+    !Number.isInteger(input.variant_position) ||
+    input.variant_position <= 0
+  ) {
     throw new Error("Variant position must be a positive integer.");
   }
 
   if (!/^[ACGT]$/.test(ref) || !/^[ACGT]$/.test(alt)) {
-    throw new Error("Only single nucleotide A, C, G, or T substitutions are supported.");
+    throw new Error(
+      "Only single nucleotide A, C, G, or T substitutions are supported.",
+    );
   }
 
   if (ref === alt) {
-    throw new Error(`Alternative base must be different from the reference base (${ref}).`);
+    throw new Error(
+      `Alternative base must be different from the reference base (${ref}).`,
+    );
   }
 
   if (!chrom) {
@@ -257,7 +284,11 @@ export async function getEvo2ResultWithCache({
 }: {
   supabase: SupabaseClient;
   input: VariantPipelineInput;
-}): Promise<{ normalized: NormalizedVariant; evo2: Evo2Result; warnings: string[] }> {
+}): Promise<{
+  normalized: NormalizedVariant;
+  evo2: Evo2Result;
+  warnings: string[];
+}> {
   const warnings: string[] = [];
   const resolvedInput = await resolveClinvarVariantInput(
     supabase,
@@ -270,7 +301,9 @@ export async function getEvo2ResultWithCache({
     const evo2 = await readOrRunEvo2Result(supabase, normalized, warnings);
     return { normalized, evo2, warnings };
   } catch (error) {
-    if (!shouldRetryClinvarAsReverseComplement(resolvedInput, normalized, error)) {
+    if (
+      !shouldRetryClinvarAsReverseComplement(resolvedInput, normalized, error)
+    ) {
       throw error;
     }
   }
@@ -278,7 +311,9 @@ export async function getEvo2ResultWithCache({
   const complementedRef = complementBase(normalized.ref);
   const complementedAlt = complementBase(normalized.alt);
   if (!complementedRef || !complementedAlt) {
-    throw new Error("Only single nucleotide A, C, G, or T substitutions are supported.");
+    throw new Error(
+      "Only single nucleotide A, C, G, or T substitutions are supported.",
+    );
   }
 
   warnings.push(
@@ -317,7 +352,9 @@ async function resolveClinvarVariantInput(
     return input;
   }
 
-  const row = Array.isArray(data) ? (data[0] as ClinvarLookupRow | undefined) : undefined;
+  const row = Array.isArray(data)
+    ? (data[0] as ClinvarLookupRow | undefined)
+    : undefined;
   const pos = numberOrNull(row?.pos);
   const ref = stringOrNull(row?.ref);
   const alt = stringOrNull(row?.alt);
@@ -386,15 +423,18 @@ export async function getDiseaseAssociation({
   supabase,
   normalized,
   evo2,
+  explore = false,
 }: {
   supabase: SupabaseClient;
   normalized: NormalizedVariant;
   evo2: Evo2Result;
+  explore?: boolean;
 }): Promise<Omit<VariantAnalysisResult, "evo2">> {
   const diseaseAssociation = await getOptionalDiseaseAssociation({
     supabase,
     normalized,
     evo2,
+    explore,
   });
 
   return {
@@ -413,15 +453,35 @@ export async function getDiseaseAssociation({
 export async function runVariantAnalysis({
   supabase,
   input,
+  allowDisease = true,
 }: {
   supabase: SupabaseClient;
   input: VariantPipelineInput;
+  allowDisease?: boolean;
 }): Promise<VariantAnalysisResult> {
-  const { normalized, evo2, warnings: evo2Warnings } = await getEvo2ResultWithCache({
+  const {
+    normalized,
+    evo2,
+    warnings: evo2Warnings,
+  } = await getEvo2ResultWithCache({
     supabase,
     input,
   });
-  const diseaseResult = await getDiseaseAssociation({ supabase, normalized, evo2 });
+  if (!allowDisease) {
+    const association: DiseaseAssociationResult = {
+      status: "plan_locked", clinvar_evidence: [], disease_model_ranking: [],
+      final_interpretation: null, model_version: null, warnings: [],
+    };
+    return { variant_key: normalized.variant_key, gene: normalized.gene, normalized_variant: normalized,
+      evo2, disease_association: association, clinvar_evidence: [], disease_model_ranking: [],
+      final_interpretation: null, model_version: null, warnings: evo2Warnings };
+  }
+  const diseaseResult = await getDiseaseAssociation({
+    supabase,
+    normalized,
+    evo2,
+    explore: input.explore_disease_associations === true,
+  });
 
   return {
     ...diseaseResult,
@@ -434,40 +494,89 @@ async function getOptionalDiseaseAssociation({
   supabase,
   normalized,
   evo2,
+  explore = false,
 }: {
   supabase: SupabaseClient;
   normalized: NormalizedVariant;
   evo2: Evo2Result;
+  explore?: boolean;
 }): Promise<DiseaseAssociationResult> {
   const warnings: string[] = [];
+  const policy = diseaseRankingPolicy(evo2.prediction, explore);
+  let exactEvidence: ClinvarEvidence[] = [];
+  const cached = await readCachedDiseaseAssociation(
+    supabase,
+    normalized,
+    evo2,
+    explore,
+    warnings,
+  );
+  if (cached) {
+    return cached;
+  }
+  const finish = (
+    result: DiseaseAssociationResult,
+  ): DiseaseAssociationResult => ({
+    ...result,
+    clinvar_evidence: exactEvidence,
+    final_interpretation: {
+      ...finalInterpretation({
+        evo2Prediction: evo2.prediction,
+        evo2Score: evo2.score,
+        exactClinvarFound: exactEvidence.length > 0,
+        exactClinvarSigGroup: summarizeSignificance(exactEvidence),
+        topDiseaseScore:
+          result.disease_model_ranking[0]?.association_score ?? null,
+      }),
+      ranking_policy: policy,
+      ranking_policy_version: 1,
+      ranking_status: result.status,
+    },
+  });
+  const finishAndCache = async (result: DiseaseAssociationResult) => {
+    const finished = finish(result);
+    if (finished.status !== "model_unavailable") {
+      await writeCachedDiseaseAssociation(
+        supabase,
+        normalized,
+        evo2,
+        explore,
+        finished,
+        warnings,
+      );
+    }
+    return finished;
+  };
 
   try {
-    if (!normalized.gene) {
-      return unavailableDiseaseAssociation(
-        "unsupported_gene",
-        warnings,
-        "No gene symbol was provided, so the custom disease model was not run.",
-      );
-    }
-
-    const geneIsSupported = await isGeneSupportedForDiseaseModel(
-      supabase,
-      normalized,
-    );
-
-    if (!geneIsSupported) {
-      return unavailableDiseaseAssociation(
-        "unsupported_gene",
-        warnings,
-        `The custom disease model is not configured for ${normalized.gene}.`,
-      );
-    }
-
-    const exactEvidence = await lookupExactClinvarEvidence(
+    // Curated retrieval is independent of model eligibility and classification.
+    exactEvidence = await lookupExactClinvarEvidence(
       supabase,
       normalized,
       warnings,
     );
+    if (policy === "skipped_benign" || policy === "skipped_uncertain") {
+      return finishAndCache(
+        unavailableDiseaseAssociation(
+          policy,
+          warnings,
+          rankingPolicyMessage(policy, evo2.prediction),
+        ),
+      );
+    }
+    if (
+      !normalized.gene ||
+      !(await isGeneSupportedForDiseaseModel(supabase, normalized))
+    ) {
+      return finishAndCache(
+        unavailableDiseaseAssociation(
+          "unsupported_gene",
+          warnings,
+          "The custom disease model is not configured for this gene.",
+        ),
+      );
+    }
+    warnings.push(RESEARCH_WARNING);
     const candidates = await buildDiseaseCandidates(
       supabase,
       normalized,
@@ -480,14 +589,14 @@ async function getOptionalDiseaseAssociation({
     );
 
     if (unavailable || hasDiseaseSubsystemWarning(warnings)) {
-      return {
+      return finishAndCache({
         status: "model_unavailable",
         clinvar_evidence: exactEvidence,
         disease_model_ranking: ranking,
         final_interpretation: null,
         model_version: modelVersion,
         warnings,
-      };
+      });
     }
 
     await persistDiseasePredictions(
@@ -497,46 +606,48 @@ async function getOptionalDiseaseAssociation({
       modelVersion,
       warnings,
     );
-
-    if (!exactEvidence.length && !ranking.length) {
-      return {
-        status: "no_evidence_found",
-        clinvar_evidence: [],
-        disease_model_ranking: [],
-        final_interpretation: null,
-        model_version: modelVersion,
-        warnings,
-      };
-    }
-
-    const topDiseaseScore = ranking[0]?.association_score ?? null;
-    const exactSigGroup =
-      exactEvidence[0]?.sig_group ??
-      deriveSignificanceGroup(exactEvidence[0]?.clinical_significance);
-
-    return {
-      status: "available",
+    return finishAndCache({
+      status:
+        !exactEvidence.length && !ranking.length
+          ? "no_evidence_found"
+          : policy === "exploratory_uncertain"
+            ? "exploratory_uncertain"
+            : "available",
       clinvar_evidence: exactEvidence,
       disease_model_ranking: ranking,
-      final_interpretation: finalInterpretation({
-        evo2Prediction: evo2.prediction,
-        evo2Score: evo2.score,
-        exactClinvarFound: exactEvidence.length > 0,
-        exactClinvarSigGroup: exactSigGroup,
-        topDiseaseScore,
-      }),
+      final_interpretation: null,
       model_version: modelVersion,
       warnings,
-    };
+    });
   } catch (error) {
-    return unavailableDiseaseAssociation(
-      "model_unavailable",
-      warnings,
-      error instanceof Error
-        ? `Disease association unavailable: ${error.message}`
-        : "Disease association unavailable.",
+    return finishAndCache(
+      unavailableDiseaseAssociation(
+        "model_unavailable",
+        warnings,
+        error instanceof Error
+          ? `Disease association unavailable: ${error.message}`
+          : "Disease association unavailable.",
+      ),
     );
   }
+}
+
+function summarizeSignificance(evidence: ClinvarEvidence[]) {
+  const groups = new Set(
+    evidence.map(
+      (item) =>
+        deriveSignificanceGroup(item.clinical_significance) ?? item.sig_group,
+    ),
+  );
+  if (
+    groups.has("conflicting") ||
+    (groups.has("benign") && groups.has("pathogenic"))
+  )
+    return "conflicting";
+  if (groups.has("vus")) return "vus";
+  if (groups.has("pathogenic")) return "pathogenic";
+  if (groups.has("benign")) return "benign";
+  return null;
 }
 
 function unavailableDiseaseAssociation(
@@ -583,13 +694,36 @@ export function finalInterpretation({
   const warning = "This is research support, not a clinical diagnosis.";
   const scoreText =
     typeof topDiseaseScore === "number"
-      ? ` The top ML association score is ${Math.round(topDiseaseScore * 100)}%.`
+      ? ` The top ML association score is ${topDiseaseScore.toFixed(3)} (model ranking score, not disease risk).`
       : "";
   const evo2Text =
     typeof evo2Score === "number"
-      ? ` Evo2 score: ${Math.round(evo2Score * 100)}%.`
+      ? ` Evo2 score: ${evo2Score.toFixed(3)} (uncalibrated model score).`
       : "";
 
+  if (
+    exactClinvarFound &&
+    (exactClinvarSigGroup === "conflicting" ||
+      (exactClinvarSigGroup === "benign" && isPathogenicEvo2(evo2Prediction)))
+  ) {
+    return {
+      level: "conflicting",
+      message:
+        "Conflicting evidence: curated assertions or Evo2 and ClinVar disagree. Review each condition separately.",
+      confidence_explanation:
+        "A model prediction does not override curated evidence. Conditions and inheritance contexts may differ.",
+      warning,
+    };
+  }
+  if (evo2Prediction === "uncertain") {
+    return {
+      level: "insufficient",
+      message:
+        "Uncertain significance: disease rankings cannot resolve this classification.",
+      confidence_explanation: RESEARCH_WARNING,
+      warning,
+    };
+  }
   if (exactClinvarFound && exactClinvarSigGroup === "vus") {
     return {
       level: "insufficient",
@@ -602,11 +736,15 @@ export function finalInterpretation({
     };
   }
 
-  if (exactClinvarFound && isPathogenicEvo2(evo2Prediction)) {
+  if (
+    exactClinvarFound &&
+    exactClinvarSigGroup === "pathogenic" &&
+    isPathogenicEvo2(evo2Prediction)
+  ) {
     return {
       level: "strong",
       message:
-        "Strong evidence: Evo2 predicts pathogenicity and exact ClinVar disease evidence exists.",
+        "Curated pathogenic assertion: an exact ClinVar match and the Evo2 prediction agree. This does not establish a diagnosis.",
       confidence_explanation:
         "ClinVar exact-match evidence is curated; the ML score is a research ranking score, not diagnostic certainty." +
         scoreText,
@@ -614,7 +752,11 @@ export function finalInterpretation({
     };
   }
 
-  if (exactClinvarFound && isBenignEvo2(evo2Prediction)) {
+  if (
+    exactClinvarFound &&
+    exactClinvarSigGroup === "pathogenic" &&
+    isBenignEvo2(evo2Prediction)
+  ) {
     return {
       level: "conflicting",
       message:
@@ -634,7 +776,7 @@ export function finalInterpretation({
     return {
       level: "possible",
       message:
-        "Possible disease association: Evo2 predicts pathogenicity and the ML disease ranking is high, but no exact ClinVar disease evidence was found.",
+        "Exploratory disease hypotheses: Evo2 predicts pathogenicity, but no exact ClinVar match was found. Ranking does not establish causality.",
       confidence_explanation:
         "This result is based on candidate disease ranking, not an exact curated variant-disease match." +
         scoreText,
@@ -642,13 +784,13 @@ export function finalInterpretation({
     };
   }
 
-  if (!exactClinvarFound && isBenignEvo2(evo2Prediction)) {
+  if (isBenignEvo2(evo2Prediction)) {
     return {
       level: "low",
       message:
-        "Low or insufficient disease association: Evo2 predicts a benign effect and no strong curated disease evidence was found.",
+        "Evo2 predicts a benign effect. Automatic ML disease ranking was skipped; this is not a clinical classification.",
       confidence_explanation:
-        "The app did not find exact ClinVar disease evidence for this selected SNV.",
+        "Available curated assertions are shown separately. Absence of evidence does not establish benignity.",
       warning,
     };
   }
@@ -700,7 +842,9 @@ export async function persistAnalysisHistory({
     final_interpretation: result.final_interpretation,
   };
 
-  const { error } = await supabase.from("prediction_history").insert(historyRow);
+  const { error } = await supabase
+    .from("prediction_history")
+    .insert(historyRow);
   if (error) {
     console.warn(
       "Could not persist enriched variant analysis history:",
@@ -752,13 +896,16 @@ export async function persistAnalysisHistory({
 function normalizeAssembly(value: string) {
   const normalized = value.trim().toLowerCase();
   if (["grch37", "grch37.p13"].includes(normalized)) return "hg19";
-  if (["grch38", "grch38.p13", "grch38.p14"].includes(normalized)) return "hg38";
+  if (["grch38", "grch38.p13", "grch38.p14"].includes(normalized))
+    return "hg38";
   return normalized || "hg38";
 }
 
 function normalizeChromosome(value: string) {
   const withoutPrefix = value.trim().replace(/^chr/i, "");
-  return withoutPrefix.toUpperCase() === "M" ? "MT" : withoutPrefix.toUpperCase();
+  return withoutPrefix.toUpperCase() === "M"
+    ? "MT"
+    : withoutPrefix.toUpperCase();
 }
 
 function normalizeGeneSymbol(value: string | undefined) {
@@ -767,7 +914,7 @@ function normalizeGeneSymbol(value: string | undefined) {
     return "";
   }
 
-  const leadingSymbol = normalized.match(/^[A-Z0-9][A-Z0-9.-]*/)?.[0] ?? "";
+  const leadingSymbol = /^[A-Z0-9][A-Z0-9.-]*/.exec(normalized)?.[0] ?? "";
   if (looksLikeGeneSymbol(leadingSymbol)) {
     return leadingSymbol;
   }
@@ -792,25 +939,7 @@ function looksLikeGeneSymbol(value: string) {
 }
 
 export function normalizeEvo2Prediction(value: unknown): Evo2Prediction {
-  const normalized =
-    typeof value === "string"
-      ? value.trim().toLowerCase().replaceAll("-", "_")
-      : "";
-
-  if (normalized.includes("likely") && normalized.includes("pathogenic")) {
-    return "likely_pathogenic";
-  }
-  if (normalized.includes("likely") && normalized.includes("benign")) {
-    return "likely_benign";
-  }
-  if (normalized.includes("pathogenic")) {
-    return "pathogenic";
-  }
-  if (normalized.includes("benign")) {
-    return "benign";
-  }
-
-  return "uncertain";
+  return normalizePrediction(value);
 }
 
 function createEvo2Result({
@@ -877,9 +1006,13 @@ async function readCachedEvo2Result(
 ): Promise<Evo2Result | null> {
   const { data, error } = await supabase
     .from("evo2_cache")
-    .select("evo2_prediction,evo2_score,delta_score,raw_prediction")
+    .select("evo2_prediction,evo2_score,delta_score,raw_prediction,updated_at")
     .eq("assembly", normalized.assembly)
     .eq("variant_key", normalized.variant_key)
+    .gte(
+      "updated_at",
+      analysisCacheCutoffIso(),
+    )
     .maybeSingle();
 
   if (error) {
@@ -900,6 +1033,112 @@ async function readCachedEvo2Result(
     rawPrediction:
       typeof row.raw_prediction === "string" ? row.raw_prediction : null,
   });
+}
+
+async function readCachedDiseaseAssociation(
+  supabase: SupabaseClient,
+  normalized: NormalizedVariant,
+  evo2: Evo2Result,
+  explore: boolean,
+  warnings: string[],
+): Promise<DiseaseAssociationResult | null> {
+  const { data, error } = await supabase
+    .from("analysis_result_cache")
+    .select("disease_association,created_at")
+    .eq("assembly", normalized.assembly)
+    .eq("variant_key", normalized.variant_key)
+    .eq("gene_key", normalized.gene ?? "")
+    .eq("explore_disease_associations", explore)
+    .eq("evo2_prediction", evo2.prediction)
+    .eq("model_version_key", DISEASE_MODEL_VERSION)
+    .eq("policy_version", DISEASE_CACHE_POLICY_VERSION)
+    .gte(
+      "created_at",
+      analysisCacheCutoffIso(),
+    )
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    warnings.push(`Analysis cache lookup unavailable: ${error.message}`);
+    return null;
+  }
+
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const value = (data as Record<string, unknown>).disease_association;
+  return isDiseaseAssociationResult(value) ? value : null;
+}
+
+async function writeCachedDiseaseAssociation(
+  supabase: SupabaseClient,
+  normalized: NormalizedVariant,
+  evo2: Evo2Result,
+  explore: boolean,
+  diseaseAssociation: DiseaseAssociationResult,
+  warnings: string[],
+) {
+  const { error } = await supabase.from("analysis_result_cache").insert({
+    assembly: normalized.assembly,
+    variant_key: normalized.variant_key,
+    gene_key: normalized.gene ?? "",
+    explore_disease_associations: explore,
+    evo2_prediction: evo2.prediction,
+    model_version_key: DISEASE_MODEL_VERSION,
+    policy_version: DISEASE_CACHE_POLICY_VERSION,
+    evo2_result: evo2,
+    disease_association: diseaseAssociation,
+  });
+
+  if (error) {
+    warnings.push(`Analysis cache write unavailable: ${error.message}`);
+  }
+}
+
+function isDiseaseAssociationResult(
+  value: unknown,
+): value is DiseaseAssociationResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const validStatuses = new Set<DiseaseAssociationStatus>([
+    "plan_locked",
+    "available",
+    "skipped_benign",
+    "skipped_uncertain",
+    "exploratory_uncertain",
+    "unsupported_gene",
+    "no_evidence_found",
+    "model_unavailable",
+  ]);
+  return (
+    validStatuses.has(candidate.status as DiseaseAssociationStatus) &&
+    Array.isArray(candidate.clinvar_evidence) &&
+    Array.isArray(candidate.disease_model_ranking) &&
+    (candidate.final_interpretation === null ||
+      (typeof candidate.final_interpretation === "object" &&
+        !Array.isArray(candidate.final_interpretation))) &&
+    (candidate.model_version === null ||
+      typeof candidate.model_version === "string") &&
+    Array.isArray(candidate.warnings) &&
+    candidate.warnings.every((warning) => typeof warning === "string")
+  );
+}
+
+function analysisCacheCutoffIso(now = new Date()) {
+  const cutoff = new Date(now);
+  const originalDay = cutoff.getUTCDate();
+  cutoff.setUTCDate(1);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - 6);
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  cutoff.setUTCDate(Math.min(originalDay, lastDayOfTargetMonth));
+  return cutoff.toISOString();
 }
 
 async function writeCachedEvo2Result(
@@ -931,7 +1170,9 @@ async function writeCachedEvo2Result(
   }
 }
 
-async function runEvo2Modal(normalized: NormalizedVariant): Promise<Evo2Result> {
+async function runEvo2Modal(
+  normalized: NormalizedVariant,
+): Promise<Evo2Result> {
   const modalUrl = process.env.MODAL_ENDPOINT_URL;
   const modalApiKey = process.env.MODAL_API_KEY;
 
@@ -985,7 +1226,9 @@ async function isGeneSupportedForDiseaseModel(
     .eq("gene", normalized.gene);
 
   if (error) {
-    throw new Error(`ClinVar gene support lookup unavailable: ${error.message}`);
+    throw new Error(
+      `ClinVar gene support lookup unavailable: ${error.message}`,
+    );
   }
 
   return (count ?? 0) > 0;
@@ -998,9 +1241,7 @@ async function lookupExactClinvarEvidence(
 ): Promise<ClinvarEvidence[]> {
   const { data, error } = await supabase
     .from("clinvar_disease_lookup")
-    .select(
-      "disease_name,disease_id,clinical_significance,sig_group,review_status,review_score,variation_id,rsid,source",
-    )
+    .select("*")
     .eq("assembly", normalized.assembly)
     .in("variant_key", getClinvarLookupVariantKeys(normalized))
     .limit(50);
@@ -1048,7 +1289,9 @@ async function buildDiseaseCandidates(
   }
 
   if (!normalized.gene) {
-    warnings.push("No gene symbol was provided, so gene-level disease candidates could not be generated.");
+    warnings.push(
+      "No gene symbol was provided, so gene-level disease candidates could not be generated.",
+    );
     return [...candidatesByDisease.values()];
   }
 
@@ -1060,7 +1303,9 @@ async function buildDiseaseCandidates(
     .limit(1000);
 
   if (error) {
-    warnings.push(`ClinVar gene candidate lookup unavailable: ${error.message}`);
+    warnings.push(
+      `ClinVar gene candidate lookup unavailable: ${error.message}`,
+    );
     return [...candidatesByDisease.values()];
   }
 
@@ -1074,7 +1319,9 @@ async function buildDiseaseCandidates(
 
   const candidates = [...candidatesByDisease.values()];
   if (!candidates.length) {
-    warnings.push("No candidate diseases were found for this selected SNV/gene.");
+    warnings.push(
+      "No candidate diseases were found for this selected SNV/gene.",
+    );
   }
 
   return candidates;
@@ -1113,7 +1360,9 @@ async function rankCandidateDiseases(
     });
 
     if (!response.ok) {
-      warnings.push(await parseServiceError(response, "Disease model service error"));
+      warnings.push(
+        await parseServiceError(response, "Disease model service error"),
+      );
       return { ranking: [], modelVersion: null, unavailable: true };
     }
 
@@ -1148,7 +1397,11 @@ async function rankCandidateDiseases(
         const diseaseName = stringOrNull(row.disease_name);
         const score = clampScore(row.association_score);
 
-        if (!diseaseName || score === null || !isUsableDiseaseName(diseaseName)) {
+        if (
+          !diseaseName ||
+          score === null ||
+          !isUsableDiseaseName(diseaseName)
+        ) {
           return null;
         }
 
@@ -1159,11 +1412,15 @@ async function rankCandidateDiseases(
         };
       })
       .filter((item): item is DiseaseModelRanking => item !== null)
-      .sort((first, second) => second.association_score - first.association_score)
+      .sort(
+        (first, second) => second.association_score - first.association_score,
+      )
       .slice(0, 10);
 
     if (!ranking.length) {
-      warnings.push("Disease model returned no usable ranked disease associations.");
+      warnings.push(
+        "Disease model returned no usable ranked disease associations.",
+      );
     }
 
     return {
@@ -1207,12 +1464,15 @@ async function persistDiseasePredictions(
 
   const { error } = await supabase.from("disease_predictions").insert(rows);
   if (error) {
-    warnings.push(`Disease prediction persistence unavailable: ${error.message}`);
+    warnings.push(
+      `Disease prediction persistence unavailable: ${error.message}`,
+    );
   }
 }
 
 function toClinvarEvidence(row: ClinvarLookupRow): ClinvarEvidence {
   return {
+    last_evaluated: stringOrNull(row.last_evaluated),
     disease_name: stringOrNull(row.disease_name) ?? "",
     disease_id: stringOrNull(row.disease_id),
     clinical_significance: stringOrNull(row.clinical_significance),
@@ -1236,7 +1496,7 @@ function dedupeEvidence(evidence: ClinvarEvidence[]) {
   const deduped: ClinvarEvidence[] = [];
 
   for (const item of evidence) {
-    const key = `${item.disease_name.toLowerCase()}|${item.variation_id ?? ""}`;
+    const key = `${item.disease_name.toLowerCase()}|${item.variation_id ?? ""}|${item.clinical_significance ?? ""}|${item.review_status ?? ""}|${item.source}`;
     if (seen.has(key)) {
       continue;
     }
@@ -1253,7 +1513,8 @@ function deriveSignificanceGroup(value: string | null | undefined) {
   const normalized = String(value ?? "").toLowerCase();
 
   if (normalized.includes("conflicting")) return "conflicting";
-  if (normalized.includes("uncertain") || normalized.includes("vus")) return "vus";
+  if (normalized.includes("uncertain") || normalized.includes("vus"))
+    return "vus";
   if (normalized.includes("pathogenic")) return "pathogenic";
   if (normalized.includes("benign")) return "benign";
 

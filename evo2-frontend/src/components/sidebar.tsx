@@ -50,7 +50,7 @@ export const Sidebar = memo(function Sidebar({ isCollapsed, setIsCollapsed }: Si
         >
              <div className="h-16 border-b border-sidebar-border" />
              <div className="flex-1 p-4 space-y-4">
-                 {[...Array(5)].map((_, i) => <div key={i} className="h-8 bg-muted rounded" />)}
+                 {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 bg-muted rounded" />)}
              </div>
         </aside>
     )
@@ -155,6 +155,9 @@ export const Sidebar = memo(function Sidebar({ isCollapsed, setIsCollapsed }: Si
 
         {/* Footer Area */}
         <div className={`p-4 border-t border-sidebar-border flex flex-col gap-4 ${isCollapsed ? 'items-center' : ''}`}>
+          <Link href="/product" className="text-xs text-muted-foreground hover:text-phosphor focus-visible:outline-2 focus-visible:outline-phosphor" title="Product, pricing and policies">
+            {isCollapsed ? 'Info' : 'Product, pricing & policies'}
+          </Link>
           {/* User Nav / Login State */}
           <div className="w-full">
             {user ? (

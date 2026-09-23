@@ -22,14 +22,13 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
-import { PlanDemoControls } from "~/app/settings/plan-demo-controls";
+import { BillingPanel } from "~/components/billing-panel";
+import { ACTIVE_ACCESS_PLAN } from "~/lib/app-access";
 import { ProfileRefresh } from "~/app/settings/profile-refresh";
 import {
   PLAN_LIMITS,
   formatAllowedGenomes,
   formatPlanName,
-  normalizePlanType,
-  normalizeSubscriptionStatus,
   type PlanType,
 } from "~/lib/plans";
 import { createClient } from "~/utils/supabase/server";
@@ -73,7 +72,9 @@ const PLAN_FEATURES = [
   {
     label: "Disease association",
     value: (planType: PlanType) =>
-      PLAN_LIMITS[planType].diseaseAssociation ? "Coming soon" : "Locked",
+      PLAN_LIMITS[planType].diseaseAssociation
+        ? "Eligible research exploration"
+        : "Locked",
     icon: FlaskConical,
   },
 ] satisfies Array<{
@@ -94,9 +95,9 @@ const PLAN_CARDS = [
   {
     planType: "researcher",
     title: "Researcher",
-    price: "Rs 0",
-    cadence: "demo",
-    description: "More predictions, history, export, and every Human assembly.",
+    price: "Free",
+    cadence: "during launch",
+    description: "Full predictions, history, export, and every Human assembly.",
     accent: true,
   },
 ] satisfies Array<{
@@ -164,51 +165,6 @@ async function updateProfileSettings(formData: FormData) {
   redirect("/settings?status=saved");
 }
 
-async function updateDemoPlan(formData: FormData) {
-  "use server";
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const requestedAction = formData.get("demo_plan_action");
-  const isReset = requestedAction === "reset";
-  const now = new Date().toISOString();
-
-  const { data: updatedProfile, error } = await supabase
-    .from("profiles")
-    .update({
-      plan_type: isReset ? "student" : "researcher",
-      subscription_status: isReset ? "inactive" : "demo",
-      plan_updated_at: now,
-      updated_at: now,
-    })
-    .eq("id", user.id)
-    .select("id")
-    .maybeSingle();
-
-  if (error) {
-    console.error("Failed to update demo plan:", error.message);
-    redirect("/settings?section=plan&status=plan-error");
-  }
-
-  if (!updatedProfile) {
-    console.error(
-      "Profile row is missing. Run supabase/profile-settings.sql to backfill profiles.",
-    );
-    redirect("/settings?section=plan&status=missing-profile");
-  }
-
-  revalidatePath("/settings");
-  revalidatePath("/", "layout");
-  redirect("/settings?section=plan&status=plan-updated");
-}
-
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -235,10 +191,7 @@ export default async function SettingsPage({
   const resolvedSearchParams = await searchParams;
   const status = resolvedSearchParams?.status;
   const section = resolvedSearchParams?.section === "plan" ? "plan" : "profile";
-  const planType = normalizePlanType(profile?.plan_type);
-  const subscriptionStatus = normalizeSubscriptionStatus(
-    profile?.subscription_status,
-  );
+  const planType = ACTIVE_ACCESS_PLAN;
   const planUpdatedAt =
     typeof profile?.plan_updated_at === "string"
       ? new Date(profile.plan_updated_at).toLocaleDateString()
@@ -255,14 +208,14 @@ export default async function SettingsPage({
         <ProfileRefresh enabled={status === "plan-updated"} />
         <div className="mb-8 flex flex-col items-center text-center">
           <p className="text-phosphor mb-3 text-xs font-semibold tracking-wide uppercase">
-            Demo subscription
+            Application access
           </p>
           <h1 className="text-foreground text-3xl font-semibold tracking-tight md:text-4xl">
-            Upgrade your plan
+            Your access
           </h1>
           <p className="text-muted-foreground mt-3 max-w-2xl text-sm leading-6">
-            Compare Student and Researcher demo access. There are no payments,
-            billing records, or real subscriptions connected.
+            Every signed-in account currently receives the complete Researcher
+            feature set for free. No payment details are required.
           </p>
           <div className="border-border/50 bg-muted/70 mt-6 inline-flex rounded-full border p-1">
             <Button
@@ -285,7 +238,7 @@ export default async function SettingsPage({
 
         {status === "plan-updated" && (
           <div className="mx-auto mb-5 max-w-3xl rounded-md border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
-            Demo plan updated.
+            Subscription updated.
           </div>
         )}
 
@@ -345,24 +298,13 @@ export default async function SettingsPage({
                     </span>
                   </div>
 
-                  {isCurrentPlan ? (
-                    <Button
-                      className="bg-muted text-muted-foreground hover:bg-muted h-12 w-full rounded-full font-semibold"
-                      disabled
-                    >
-                      Your current plan
-                    </Button>
-                  ) : (
-                    <PlanDemoControls
-                      className={`h-12 w-full rounded-full font-semibold active:scale-[0.98] ${
-                        planCard.accent
-                          ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                          : "border-border/70 bg-card text-foreground hover:bg-muted"
-                      }`}
-                      formAction={updateDemoPlan}
-                      planType={planType}
-                    />
-                  )}
+                  <p className="text-muted-foreground text-sm">
+                    {isCurrentPlan
+                      ? "Your current access"
+                      : planCard.planType === "researcher"
+                        ? "Included free while billing is paused."
+                        : "The full Researcher workspace is currently enabled."}
+                  </p>
                 </CardHeader>
                 <CardContent className="relative px-7 pt-7 pb-7">
                   <div className="border-border/45 divide-border/35 divide-y border-t">
@@ -408,21 +350,26 @@ export default async function SettingsPage({
           })}
         </div>
 
+        <div className="mt-6">
+          <BillingPanel />
+        </div>
         <Card className="border-border/50 bg-card/90 mt-6 overflow-hidden rounded-[1.25rem]">
           <CardContent className="grid gap-0 p-0 md:grid-cols-3">
             <div className="border-border/40 border-b p-5 md:border-r md:border-b-0">
               <p className="text-muted-foreground flex items-center gap-2 text-sm">
                 <CreditCard className="text-phosphor h-4 w-4" />
-                Active plan
+                Active access
               </p>
               <p className="mt-2 text-xl font-semibold">
                 {formatPlanName(planType)}
               </p>
             </div>
             <div className="border-border/40 border-b p-5 md:border-r md:border-b-0">
-              <p className="text-muted-foreground text-sm">Demo status</p>
+              <p className="text-muted-foreground text-sm">
+                Payment status
+              </p>
               <p className="mt-2 text-xl font-semibold capitalize">
-                {subscriptionStatus}
+                Not required
               </p>
             </div>
             <div className="p-5">

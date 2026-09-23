@@ -2,9 +2,14 @@
 
 import { useState } from 'react'
 import { Sidebar } from '~/components/sidebar'
+import { usePathname } from 'next/navigation'
+import { isPublicPage } from '~/lib/public-site'
 
 export function SidebarLayout({ children }: { children: React.ReactNode }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const pathname = usePathname()
+
+  if (isPublicPage(pathname)) return <>{children}</>
 
   return (
     <div className="flex min-h-screen">

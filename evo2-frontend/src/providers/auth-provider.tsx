@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState, useMemo, u
 import { createClient } from '~/utils/supabase/client'
 import { type User } from '@supabase/supabase-js'
 import { useRouter } from 'next/navigation'
+import { ACTIVE_ACCESS_PLAN } from '~/lib/app-access'
 
 /**
  * Shape of the profile columns fetched from `profiles`.
@@ -22,7 +23,7 @@ export interface UserProfile {
 
 /** Columns requested in every profile fetch — avoids `select('*')`. */
 const PROFILE_COLUMNS =
-  'id, full_name, display_name, plan_type, subscription_status, theme_preference, email_notifications, plan_updated_at' as const
+  'id, full_name, display_name, plan_type, subscription_status, theme_preference, email_notifications, plan_updated_at'
 
 function logRecoverableAuthIssue(context: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
@@ -41,8 +42,8 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   loading: true,
-  refreshProfile: async () => {},
-  signOut: async () => {},
+  refreshProfile: async () => undefined,
+  signOut: async () => undefined,
 })
 
 export const useAuth = () => useContext(AuthContext)
@@ -163,7 +164,11 @@ export function AuthProvider({ children, initialUser }: { children: React.ReactN
         .single()
       
       if (!error && data && isMounted.current) {
-        setProfile(data as UserProfile)
+        setProfile({
+          ...data,
+          plan_type: ACTIVE_ACCESS_PLAN,
+          subscription_status: 'inactive',
+        } as UserProfile)
       }
     } catch (e) {
       logRecoverableAuthIssue('Error fetching profile', e)

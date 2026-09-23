@@ -5,7 +5,8 @@ import { Suspense } from 'react'
 import { ExportPredictionsButton } from '~/components/export-predictions-button'
 import { HistoryTable } from '~/components/history-table'
 import { Button } from '~/components/ui/button'
-import { getPlanLimits, normalizePlanType } from '~/lib/plans'
+import { getPlanLimits } from '~/lib/plans'
+import { ACTIVE_ACCESS_PLAN } from '~/lib/app-access'
 import { createClient } from '~/utils/supabase/server'
 
 export default async function DashboardPage() {
@@ -17,14 +18,7 @@ export default async function DashboardPage() {
     redirect('/login')
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('plan_type')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  const planType = normalizePlanType(profile?.plan_type)
-  const planLimits = getPlanLimits(planType)
+  const planLimits = getPlanLimits(ACTIVE_ACCESS_PLAN)
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -62,7 +56,7 @@ export default async function DashboardPage() {
                   <h3 className="text-lg font-semibold">History is locked on Student</h3>
                   <p className="text-muted-foreground mt-2 max-w-md text-sm">
                     Prediction history and CSV export are included in the
-                    Researcher demo plan. Your Student quota is still tracked
+                    Researcher plan. Your Student quota is still tracked
                     securely for daily usage limits.
                   </p>
                   <Button asChild className="mt-5">
