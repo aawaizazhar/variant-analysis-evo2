@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, type ComponentProps } from 'react'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
 import { Button } from '~/components/ui/button'
@@ -26,6 +26,34 @@ type AuthMode = 'login' | 'signup' | 'otp' | 'forgot' | 'reset'
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const MIN_PASSWORD_LENGTH = 8
+
+type PasswordInputProps = Omit<ComponentProps<typeof Input>, 'type'> & {
+  fieldLabel: string
+}
+
+function PasswordInput({ fieldLabel, className, ...props }: PasswordInputProps) {
+  const [isVisible, setIsVisible] = useState(false)
+  const action = isVisible ? 'Hide' : 'Show'
+
+  return (
+    <div className="relative">
+      <Input
+        {...props}
+        type={isVisible ? 'text' : 'password'}
+        className={`${className ?? ''} pr-16`}
+      />
+      <button
+        type="button"
+        aria-label={`${action} ${fieldLabel.toLowerCase()}`}
+        aria-pressed={isVisible}
+        onClick={() => setIsVisible((visible) => !visible)}
+        className="absolute inset-y-0 right-0 flex items-center rounded-r-md px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:scale-[0.98]"
+      >
+        {action}
+      </button>
+    </div>
+  )
+}
 
 function getAuthExceptionMessage(error: unknown) {
   if (error instanceof Error) {
@@ -559,10 +587,11 @@ export default function LoginPage() {
                   </label>
                   <span className="text-xs text-muted-foreground/60">Min. 8 characters</span>
                 </div>
-                <Input
+                <PasswordInput
+                  fieldLabel="New password"
                   id="new-password"
                   name="new-password"
-                  type="password"
+                  autoComplete="new-password"
                   placeholder="••••••••"
                   className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${newPasswordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
@@ -587,10 +616,11 @@ export default function LoginPage() {
                   <Lock className="h-3.5 w-3.5" />
                   Confirm Password
                 </label>
-                <Input
+                <PasswordInput
+                  fieldLabel="Confirm password"
                   id="confirm-password"
                   name="confirm-password"
-                  type="password"
+                  autoComplete="new-password"
                   placeholder="••••••••"
                   className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${confirmPasswordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
@@ -757,10 +787,11 @@ export default function LoginPage() {
                     <span className="text-xs text-muted-foreground/60">Min. 8 characters</span>
                   )}
                 </div>
-                <Input
+                <PasswordInput
+                  fieldLabel="Password"
                   id="password"
                   name="password"
-                  type="password"
+                  autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
                   placeholder="••••••••"
                   className={`bg-background dark:bg-background border-input text-foreground py-6 transition-colors ${passwordError ? 'border-red-500/50 focus-visible:ring-red-500/30' : ''
                     }`}
